@@ -66,6 +66,26 @@ module Brainiac
 
           Do NOT make any code changes. This is a read-only review task.
         PROMPT
+
+        PRE_POST_CHECK = <<~PROMPT
+          ## Pre-Post Comment Check (MANDATORY — do this BEFORE posting your comment)
+
+          Your session may have been running for a while. Before you post your final comment,
+          re-check the PR for new comments that arrived while you were working:
+
+          ```bash
+          gh pr view {{PR_NUMBER}} --comments --json comments
+          ```
+
+          If there are **new comments** that weren't in your original context:
+
+          1. **Read them carefully** — a reviewer may have added feedback or changed direction
+          2. **Adjust your work or response** to account for the new information
+          3. **Do NOT ignore new comments** — avoid posting a response that's already outdated
+
+          If no new comments appeared, proceed normally.
+
+        PROMPT
       end
     end
   end

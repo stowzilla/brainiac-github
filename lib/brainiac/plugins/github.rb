@@ -17,7 +17,8 @@ module Brainiac
         # @param app [Sinatra::Application] The running Brainiac server
         def register(app)
           Config.load!
-          Brainiac.register_channel_prompt(:github, Prompts::CHANNEL)
+          Brainiac.register_channel_prompt(:github, Prompts::CHANNEL, pre_post_check: Prompts::PRE_POST_CHECK)
+          register_crash_handler!
           setup_routes(app)
           LOG.info "[GitHub] Plugin registered (webhook: /github)"
         end
@@ -37,6 +38,32 @@ module Brainiac
         end
 
         private
+
+        def register_crash_handler!
+          Brainiac.on(:agent_crashed) do |ctx|
+            next unless ctx[:source] == :github
+
+            source_context = ctx[:source_context] || {}
+            pr_number = source_context[:pr_number]
+            repo_name = source_context[:repo_name]
+            next unless pr_number && repo_name
+
+            work_dir = source_context[:work_dir] || Dir.pwd
+            agent_display = ctx[:agent_name] || "Agent"
+            snippet = ctx[:snippet]
+            snippet_block = snippet ? "\n```\n#{snippet[-1500..]}\n```" : ""
+            comment_body = "💥 **#{agent_display} crashed** (exit code #{ctx[:exit_status]})\n\nLog: `#{ctx[:log_file]}`#{snippet_block}"
+
+            begin
+              run_cmd("gh", "pr", "comment", pr_number.to_s, "--repo", repo_name, "--body", comment_body, chdir: work_dir)
+              LOG.info "[GitHub] Posted crash comment on PR ##{pr_number}"
+            rescue StandardError => e
+              LOG.error "[GitHub] Failed to post crash comment: #{e.message}"
+            end
+
+            :github
+          end
+        end
 
         def setup_routes(app)
           app.post "/github" do
