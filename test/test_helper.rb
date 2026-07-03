@@ -25,7 +25,7 @@ unless defined?(LOG)
   end.new
 end
 
-AI_AGENT_NAME = "Galen" unless defined?(AI_AGENT_NAME)
+AI_AGENT_NAME = "Sherlock" unless defined?(AI_AGENT_NAME)
 
 # Stub core Brainiac module with hooks
 module Brainiac
@@ -62,8 +62,8 @@ end
 
 # Stub core constants
 AGENT_REGISTRY = {
-  "galen" => { "display_name" => "Galen", "local" => true, "env" => { "FIZZY_TOKEN" => "tok_galen" } },
-  "glados" => { "display_name" => "GLaDOS", "local" => true, "env" => {} }
+  "sherlock" => { "display_name" => "Sherlock", "local" => true, "env" => { "FIZZY_TOKEN" => "tok_sherlock" } },
+  "robin" => { "display_name" => "Robin", "local" => true, "env" => {} }
 }.freeze
 
 PROJECTS = {
@@ -86,7 +86,7 @@ def mark_work_item_merged(_num) = nil
 def cleanup_work_item_worktrees(_num, **) = nil
 def session_active?(_key) = false
 def register_session(_key, _pid, **) = nil
-def agent_name_for(_config) = "Galen"
+def agent_name_for(_config) = "Sherlock"
 def render_prompt(_template, _vars, brain_context: "", agent_name: nil, channel: :github) = "rendered prompt"
 def build_brain_context(agent_name:, card_number: nil, project_key: nil, comment_body: nil) = ""
 def detect_model(_config, text: "") = nil
