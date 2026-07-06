@@ -225,6 +225,16 @@ module Brainiac
 
           private
 
+          def find_work_item_by_branch(branch)
+            map = load_work_item_map
+            map.each do |internal_id, info|
+              next unless info["branch"] == branch
+
+              return [internal_id, info]
+            end
+            nil
+          end
+
           def process_merged_pr(card_info, card_number, branch, pull_request, pr_url, pr_title, project_key, project_config, repo_path)
             mark_work_item_merged(card_number)
             cleanup_work_item_worktrees(card_number, repo_path: repo_path,
