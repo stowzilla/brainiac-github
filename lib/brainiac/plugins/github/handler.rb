@@ -101,19 +101,25 @@ module Brainiac
             repo_path = project_config["repo_path"]
 
             result = find_work_item_by_branch(branch)
-            return [200, { status: "ignored", reason: "no matching card" }.to_json] unless result
 
-            _internal_id, card_info = result
-            card_number = card_info["number"]
-            unless card_number
-              LOG.warn "Card has no number — can't dispatch review"
-              return [200, { status: "ignored", reason: "card has no number" }.to_json]
+            if result
+              _internal_id, card_info = result
+              card_number = card_info["number"]
+              unless card_number
+                LOG.warn "Card has no number — can't dispatch review"
+                return [200, { status: "ignored", reason: "card has no number" }.to_json]
+              end
+              card_key = "card-#{card_number}"
+            else
+              card_info = {}
+              card_number = nil
+              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
 
-            card_key = "card-#{card_number}"
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
 
-            LOG.info "PR review submitted by #{reviewer} on PR ##{pr_number} for card ##{card_number} (project: #{project_key})"
+            card_context = card_number ? " for card ##{card_number}" : ""
+            LOG.info "PR review submitted by #{reviewer} on PR ##{pr_number}#{card_context} (project: #{project_key})"
             dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
                                repo_name, project_key, project_config, repo_path)
 
@@ -150,27 +156,31 @@ module Brainiac
             branch = JSON.parse(pr_data)["branch"]
 
             result = find_work_item_by_branch(branch)
-            unless result
-              LOG.info "No card found for PR ##{pr_number} (branch: #{branch})"
-              return [200, { status: "ignored", reason: "no matching card" }.to_json]
+
+            if result
+              _, card_info = result
+              card_number = card_info["number"]
+              worktree = card_info["worktree"]
+
+              unless worktree && File.directory?(worktree)
+                LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
+                return [200, { status: "ignored", reason: "no active worktree" }.to_json]
+              end
+
+              card_key = "card-#{card_number}"
+            else
+              card_number = nil
+              worktree = project_config["repo_path"]
+              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
 
-            _, card_info = result
-            card_number = card_info["number"]
-            worktree = card_info["worktree"]
-
-            unless worktree && File.directory?(worktree)
-              LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
-              return [200, { status: "ignored", reason: "no active worktree" }.to_json]
-            end
-
-            card_key = "card-#{card_number}"
             if session_active?(card_key)
-              LOG.info "Skipping PR comment on card ##{card_number} — agent session already active"
+              LOG.info "Skipping PR comment on #{card_key} — agent session already active"
               return [200, { status: "ignored", reason: "session already active" }.to_json]
             end
 
-            LOG.info "PR comment from #{comment_user} on PR ##{pr_number} for card ##{card_number} (project: #{project_key})"
+            card_context = card_number ? " for card ##{card_number}" : ""
+            LOG.info "PR comment from #{comment_user} on PR ##{pr_number}#{card_context} (project: #{project_key})"
             dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
                                 repo_name, worktree, project_key, project_config)
 
@@ -283,7 +293,8 @@ module Brainiac
 
             agent_name = agent_name_for(project_config)
             prompt = render_prompt(Prompts::PR_COMMENT,
-                                   { "CARD_NUMBER" => card_number, "CARD_ID" => card_number,
+                                   { "CARD_NUMBER" => card_number || "PR-#{pr_number}",
+                                     "CARD_ID" => card_number || "PR-#{pr_number}",
                                      "COMMENT_CREATOR" => comment_user, "COMMENT_BODY" => comment_body,
                                      "PR_NUMBER" => pr_number.to_s, "WORKTREE_PATH" => worktree },
                                    brain_context: build_brain_context(agent_name: agent_name, card_number: card_number,
@@ -318,7 +329,8 @@ module Brainiac
             work_dir = worktree && File.directory?(worktree) ? worktree : repo_path
 
             prompt = render_prompt(Prompts::PR_REVIEW,
-                                   { "CARD_NUMBER" => card_number, "CARD_ID" => card_number,
+                                   { "CARD_NUMBER" => card_number || "PR-#{pr_number}",
+                                     "CARD_ID" => card_number || "PR-#{pr_number}",
                                      "COMMENT_CREATOR" => reviewer, "REVIEW_CONTEXT" => review_context,
                                      "PR_NUMBER" => pr_number.to_s, "WORKTREE_PATH" => work_dir },
                                    brain_context: build_brain_context(agent_name: agent_name, card_number: card_number,
@@ -326,7 +338,8 @@ module Brainiac
                                    agent_name: agent_name, channel: :github)
 
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: work_dir,
-                                              log_name: "review-#{card_number}", agent_name: agent_name,
+                                              log_name: "review-#{card_number || "pr-#{pr_number}"}",
+                                              agent_name: agent_name,
                                               source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir })
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
