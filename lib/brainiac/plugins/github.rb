@@ -19,6 +19,7 @@ module Brainiac
           Config.load!
           Brainiac.register_channel_prompt(:github, Prompts::CHANNEL, pre_post_check: Prompts::PRE_POST_CHECK)
           register_crash_handler!
+          register_agent_lifecycle_hooks!
           setup_routes(app)
           LOG.info "[GitHub] Plugin registered (webhook: /github)"
         end
@@ -38,6 +39,18 @@ module Brainiac
         end
 
         private
+
+        def register_agent_lifecycle_hooks!
+          Brainiac.on(:agent_added) do |ctx|
+            Config.reload!
+            LOG.info "[GitHub] Agent added: #{ctx[:display_name]} — config reloaded" if defined?(LOG)
+          end
+
+          Brainiac.on(:agent_removed) do |ctx|
+            Config.reload!
+            LOG.info "[GitHub] Agent removed: #{ctx[:agent_key]} — config reloaded" if defined?(LOG)
+          end
+        end
 
         def register_crash_handler!
           Brainiac.on(:agent_crashed) do |ctx|
