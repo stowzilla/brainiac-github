@@ -306,7 +306,10 @@ module Brainiac
                                               model: detect_model(project_config, text: comment_body),
                                               effort: detect_effort(project_config, text: comment_body),
                                               agent_name: agent_name, source: :github,
-                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree })
+                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
+                                              message: comment_body, channel: "GitHub PR comment")
+            return unless pid
+
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
           end
 
@@ -341,7 +344,10 @@ module Brainiac
                                               log_name: "review-#{card_number || "pr-#{pr_number}"}",
                                               agent_name: agent_name,
                                               source: :github,
-                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir })
+                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
+                                              message: review["body"], channel: "GitHub PR review")
+            return unless pid
+
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
           end
 
