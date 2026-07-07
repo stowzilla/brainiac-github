@@ -151,9 +151,14 @@ module Brainiac
             project_key, project_config = project_result
             pr_number = issue["number"]
 
-            pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
-                              chdir: project_config["repo_path"])
-            branch = JSON.parse(pr_data)["branch"]
+            if AppClient.configured?
+              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}")
+              branch = pr_response.dig("head", "ref")
+            else
+              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
+                                chdir: project_config["repo_path"])
+              branch = JSON.parse(pr_data)["branch"]
+            end
 
             result = find_work_item_by_branch(branch)
 
@@ -285,8 +290,12 @@ module Brainiac
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
                                   repo_name, worktree, project_key, project_config)
             Thread.new do
-              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/comments/#{comment_id}/reactions",
-                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: worktree)
+              if AppClient.configured?
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/comments/#{comment_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: worktree)
+              end
             rescue StandardError => e
               LOG.warn "Could not add reaction to comment: #{e.message}"
             end
@@ -317,8 +326,12 @@ module Brainiac
                                  repo_name, project_key, project_config, repo_path)
             review_id = review["id"]
             Thread.new do
-              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
-                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              if AppClient.configured?
+                AppClient.create_review_reaction(repo_name, review_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              end
             rescue StandardError => e
               LOG.warn "Could not add reaction to review: #{e.message}"
             end
@@ -366,10 +379,16 @@ module Brainiac
           end
 
           def fetch_pr_review_comments(pr_number, repo)
-            output = run_cmd("gh", "api", "/repos/#{repo}/pulls/#{pr_number}/comments",
-                             "--jq", ".[] | {path, line, body, user: .user.login}",
-                             chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
-            output.lines.map { |line| JSON.parse(line) }
+            if AppClient.configured?
+              response = AppClient.get("/repos/#{repo}/pulls/#{pr_number}/comments")
+              # Response is an array of comment objects
+              response.map { |c| { "path" => c["path"], "line" => c["line"], "body" => c["body"], "user" => c.dig("user", "login") } }
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo}/pulls/#{pr_number}/comments",
+                               "--jq", ".[] | {path, line, body, user: .user.login}",
+                               chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
+              output.lines.map { |line| JSON.parse(line) }
+            end
           rescue StandardError => e
             LOG.warn "Could not fetch PR review comments: #{e.message}"
             []

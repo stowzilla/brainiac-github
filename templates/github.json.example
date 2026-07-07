@@ -1,4 +1,9 @@
 {
   "webhook_secret": "your-github-webhook-secret",
+  "app": {
+    "id": "",
+    "private_key_path": "~/.brainiac/github-app-private-key.pem",
+    "installation_id": ""
+  },
   "repos": {}
 }
