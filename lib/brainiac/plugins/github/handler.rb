@@ -301,13 +301,15 @@ module Brainiac
                                                                       project_key: project_key, comment_body: comment_body),
                                    agent_name: agent_name, channel: :github)
 
+            intent_ctx = fetch_pr_intent_context(pr_number, repo_name)
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: worktree,
                                               log_name: "pr-comment-#{pr_number}",
                                               model: detect_model(project_config, text: comment_body),
                                               effort: detect_effort(project_config, text: comment_body),
                                               agent_name: agent_name, source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
-                                              message: comment_body, channel: "GitHub PR comment")
+                                              message: comment_body, channel: "GitHub PR comment",
+                                              context: intent_ctx)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -345,7 +347,8 @@ module Brainiac
                                               agent_name: agent_name,
                                               source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
-                                              message: review["body"], channel: "GitHub PR review")
+                                              message: review["body"], channel: "GitHub PR review",
+                                              context: fetch_pr_intent_context(pr_number, repo_name))
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -373,6 +376,20 @@ module Brainiac
           rescue StandardError => e
             LOG.warn "Could not fetch PR review comments: #{e.message}"
             []
+          end
+
+          # Lightweight recent PR comment context for intent classification.
+          # Returns "author: message" format (last 5 issue comments on the PR).
+          def fetch_pr_intent_context(pr_number, repo_name)
+            output = run_cmd("gh", "api", "/repos/#{repo_name}/issues/#{pr_number}/comments",
+                             "--jq", ".[-5:] | .[] | \"\\(.user.login): \\(.body[0:200])\"",
+                             chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
+            return nil if output.strip.empty?
+
+            output.strip
+          rescue StandardError => e
+            LOG.warn "[GitHub] Could not fetch intent context for PR ##{pr_number}: #{e.message}" if defined?(LOG)
+            nil
           end
 
           def close_uat_cards_after_deploy(project_key, project_config)
