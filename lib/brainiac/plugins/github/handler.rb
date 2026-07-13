@@ -35,7 +35,7 @@ module Brainiac
             end
 
             _internal_id, card_info = result
-            card_number = card_info["number"]
+            card_number = extract_card_number(card_info)
             unless card_number
               LOG.warn "Card has no number — can't comment or move"
               return [200, { status: "ignored", reason: "card has no number" }.to_json]
@@ -63,7 +63,7 @@ module Brainiac
             return [200, { status: "ignored", reason: "no matching card" }.to_json] unless result
 
             _internal_id, card_info = result
-            card_number = card_info["number"]
+            card_number = extract_card_number(card_info)
             worktree = card_info["worktree"]
 
             return [200, { status: "ignored", reason: "no worktree" }.to_json] unless worktree && File.directory?(worktree)
@@ -104,7 +104,7 @@ module Brainiac
 
             if result
               _internal_id, card_info = result
-              card_number = card_info["number"]
+              card_number = extract_card_number(card_info)
               unless card_number
                 LOG.warn "Card has no number — can't dispatch review"
                 return [200, { status: "ignored", reason: "card has no number" }.to_json]
@@ -159,7 +159,7 @@ module Brainiac
 
             if result
               _, card_info = result
-              card_number = card_info["number"]
+              card_number = extract_card_number(card_info)
               worktree = card_info["worktree"]
 
               unless worktree && File.directory?(worktree)
@@ -245,6 +245,28 @@ module Brainiac
             nil
           end
 
+          # Extract the card number from a work item info hash, supporting both
+          # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
+          def extract_card_number(card_info)
+            card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
+          end
+
+          # Extract PRs array from a work item, supporting both old flat format and new source-based format.
+          def extract_prs(card_info)
+            card_info.dig("sources", "github", "prs") || card_info["prs"] || []
+          end
+
+          # Store PRs in the correct location based on the work item format.
+          def store_prs(card_info, prs)
+            if card_info.key?("sources")
+              card_info["sources"] ||= {}
+              card_info["sources"]["github"] ||= {}
+              card_info["sources"]["github"]["prs"] = prs
+            else
+              card_info["prs"] = prs
+            end
+          end
+
           def process_merged_pr(card_info, card_number, branch, pull_request, pr_url, pr_title, project_key, project_config, repo_path)
             mark_work_item_merged(card_number)
             cleanup_work_item_worktrees(card_number, repo_path: repo_path,
@@ -270,16 +292,16 @@ module Brainiac
             end
 
             internal_id, card_info = result
-            prs = card_info["prs"] || []
+            prs = extract_prs(card_info)
             return if prs.any? { |p| p["number"] == pr_number }
 
             prs << { "number" => pr_number, "url" => pr_url }
-            card_info["prs"] = prs
+            store_prs(card_info, prs)
 
             map = load_work_item_map
             map[internal_id] = card_info
             save_work_item_map(map)
-            LOG.info "[PR Track] Tracked PR ##{pr_number} on card ##{card_info["number"]} (branch: #{branch})"
+            LOG.info "[PR Track] Tracked PR ##{pr_number} on card ##{extract_card_number(card_info)} (branch: #{branch})"
           end
 
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
