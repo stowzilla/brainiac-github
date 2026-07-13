@@ -343,6 +343,8 @@ module Brainiac
             Thread.new do
               run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
                       "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+
+              react_to_review_comments(review_id, pr_number, repo_name, repo_path)
             rescue StandardError => e
               LOG.warn "Could not add reaction to review: #{e.message}"
             end
@@ -398,6 +400,21 @@ module Brainiac
           rescue StandardError => e
             LOG.warn "Could not fetch PR review comments: #{e.message}"
             []
+          end
+
+          # React with 👀 to each individual comment in a review submission.
+          # This makes reactions visible on line-level file comments, not just the review wrapper.
+          def react_to_review_comments(review_id, pr_number, repo_name, repo_path)
+            output = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments",
+                             "--jq", ".[].id", chdir: repo_path)
+            comment_ids = output.lines.map(&:strip).reject(&:empty?)
+
+            comment_ids.each do |comment_id|
+              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/comments/#{comment_id}/reactions",
+                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+            end
+          rescue StandardError => e
+            LOG.warn "Could not react to review comments: #{e.message}"
           end
 
           # Lightweight recent PR comment context for intent classification.
