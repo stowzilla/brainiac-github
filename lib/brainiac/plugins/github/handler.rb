@@ -109,11 +109,11 @@ module Brainiac
                 LOG.warn "Card has no number — can't dispatch review"
                 return [200, { status: "ignored", reason: "card has no number" }.to_json]
               end
-              card_key = "card-#{card_number}"
+              card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
             else
               card_info = {}
               card_number = nil
-              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
+              card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
@@ -167,11 +167,11 @@ module Brainiac
                 return [200, { status: "ignored", reason: "no active worktree" }.to_json]
               end
 
-              card_key = "card-#{card_number}"
+              card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
             else
               card_number = nil
               worktree = project_config["repo_path"]
-              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
+              card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
 
             if session_active?(card_key)
