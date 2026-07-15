@@ -35,7 +35,7 @@ module Brainiac
             end
 
             _internal_id, card_info = result
-            card_number = card_info["number"]
+            card_number = extract_card_number(card_info)
             unless card_number
               LOG.warn "Card has no number — can't comment or move"
               return [200, { status: "ignored", reason: "card has no number" }.to_json]
@@ -63,7 +63,7 @@ module Brainiac
             return [200, { status: "ignored", reason: "no matching card" }.to_json] unless result
 
             _internal_id, card_info = result
-            card_number = card_info["number"]
+            card_number = extract_card_number(card_info)
             worktree = card_info["worktree"]
 
             return [200, { status: "ignored", reason: "no worktree" }.to_json] unless worktree && File.directory?(worktree)
@@ -104,17 +104,16 @@ module Brainiac
 
             if result
               _internal_id, card_info = result
-              card_number = card_info["number"]
+              card_number = extract_card_number(card_info)
               unless card_number
                 LOG.warn "Card has no number — can't dispatch review"
                 return [200, { status: "ignored", reason: "card has no number" }.to_json]
               end
-              card_key = "card-#{card_number}"
             else
               card_info = {}
               card_number = nil
-              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
+            card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
 
@@ -164,7 +163,7 @@ module Brainiac
 
             if result
               _, card_info = result
-              card_number = card_info["number"]
+              card_number = extract_card_number(card_info)
               worktree = card_info["worktree"]
 
               unless worktree && File.directory?(worktree)
@@ -172,12 +171,11 @@ module Brainiac
                 return [200, { status: "ignored", reason: "no active worktree" }.to_json]
               end
 
-              card_key = "card-#{card_number}"
             else
               card_number = nil
               worktree = project_config["repo_path"]
-              card_key = "pr-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
+            card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             if session_active?(card_key)
               LOG.info "Skipping PR comment on #{card_key} — agent session already active"
@@ -250,6 +248,28 @@ module Brainiac
             nil
           end
 
+          # Extract the card number from a work item info hash, supporting both
+          # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
+          def extract_card_number(card_info)
+            card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
+          end
+
+          # Extract PRs array from a work item, supporting both old flat format and new source-based format.
+          def extract_prs(card_info)
+            card_info.dig("sources", "github", "prs") || card_info["prs"] || []
+          end
+
+          # Store PRs in the correct location based on the work item format.
+          def store_prs(card_info, prs)
+            if card_info.key?("sources")
+              card_info["sources"] ||= {}
+              card_info["sources"]["github"] ||= {}
+              card_info["sources"]["github"]["prs"] = prs
+            else
+              card_info["prs"] = prs
+            end
+          end
+
           def process_merged_pr(card_info, card_number, branch, pull_request, pr_url, pr_title, project_key, project_config, repo_path)
             mark_work_item_merged(card_number)
             cleanup_work_item_worktrees(card_number, repo_path: repo_path,
@@ -275,16 +295,16 @@ module Brainiac
             end
 
             internal_id, card_info = result
-            prs = card_info["prs"] || []
+            prs = extract_prs(card_info)
             return if prs.any? { |p| p["number"] == pr_number }
 
             prs << { "number" => pr_number, "url" => pr_url }
-            card_info["prs"] = prs
+            store_prs(card_info, prs)
 
             map = load_work_item_map
             map[internal_id] = card_info
             save_work_item_map(map)
-            LOG.info "[PR Track] Tracked PR ##{pr_number} on card ##{card_info["number"]} (branch: #{branch})"
+            LOG.info "[PR Track] Tracked PR ##{pr_number} on card ##{extract_card_number(card_info)} (branch: #{branch})"
           end
 
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
@@ -310,13 +330,15 @@ module Brainiac
                                                                       project_key: project_key, comment_body: comment_body),
                                    agent_name: agent_name, channel: :github)
 
+            intent_ctx = fetch_pr_intent_context(pr_number, repo_name)
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: worktree,
                                               log_name: "pr-comment-#{pr_number}",
                                               model: detect_model(project_config, text: comment_body),
                                               effort: detect_effort(project_config, text: comment_body),
                                               agent_name: agent_name, source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
-                                              message: comment_body, channel: "GitHub PR comment")
+                                              message: comment_body, channel: "GitHub PR comment",
+                                              context: intent_ctx)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -332,6 +354,8 @@ module Brainiac
                 run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
                         "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
               end
+
+              react_to_review_comments(review_id, pr_number, repo_name, repo_path)
             rescue StandardError => e
               LOG.warn "Could not add reaction to review: #{e.message}"
             end
@@ -358,7 +382,8 @@ module Brainiac
                                               agent_name: agent_name,
                                               source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
-                                              message: review["body"], channel: "GitHub PR review")
+                                              message: review["body"], channel: "GitHub PR review",
+                                              context: fetch_pr_intent_context(pr_number, repo_name))
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -392,6 +417,52 @@ module Brainiac
           rescue StandardError => e
             LOG.warn "Could not fetch PR review comments: #{e.message}"
             []
+          end
+
+          # React with 👀 to each individual comment in a review submission.
+          # This makes reactions visible on line-level file comments, not just the review wrapper.
+          def react_to_review_comments(review_id, pr_number, repo_name, repo_path)
+            if AppClient.configured?
+              comments = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments")
+              comment_ids = comments.map { |c| c["id"] }
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments",
+                               "--jq", ".[].id", chdir: repo_path)
+              comment_ids = output.lines.map(&:strip).reject(&:empty?)
+            end
+
+            comment_ids.each do |comment_id|
+              if AppClient.configured?
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/comments/#{comment_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              end
+            end
+          rescue StandardError => e
+            LOG.warn "Could not react to review comments: #{e.message}"
+          end
+
+          # Lightweight recent PR comment context for intent classification.
+          # Returns "author: message" format (last 5 issue comments on the PR).
+          def fetch_pr_intent_context(pr_number, repo_name)
+            if AppClient.configured?
+              comments = AppClient.get("/repos/#{repo_name}/issues/#{pr_number}/comments")
+              entries = comments.last(5).map { |c| "#{c.dig("user", "login")}: #{c["body"]&.slice(0, 200)}" }
+              return nil if entries.empty?
+
+              entries.join("\n")
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo_name}/issues/#{pr_number}/comments",
+                               "--jq", ".[-5:] | .[] | \"\\(.user.login): \\(.body[0:200])\"",
+                               chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
+              return nil if output.strip.empty?
+
+              output.strip
+            end
+          rescue StandardError => e
+            LOG.warn "[GitHub] Could not fetch intent context for PR ##{pr_number}: #{e.message}" if defined?(LOG)
+            nil
           end
 
           def close_uat_cards_after_deploy(project_key, project_config)
