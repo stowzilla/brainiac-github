@@ -24,6 +24,11 @@ Config lives at `~/.brainiac/github.json`:
 ```json
 {
   "webhook_secret": "your-github-webhook-secret",
+  "app": {
+    "id": "123456",
+    "private_key_path": "~/.brainiac/github-app-private-key.pem",
+    "installation_id": "78901234"
+  },
   "repos": {}
 }
 ```
@@ -33,6 +38,49 @@ Generate a webhook secret:
 ```bash
 ruby -rsecurerandom -e 'puts SecureRandom.hex(20)'
 ```
+
+### GitHub App Setup (Recommended)
+
+Using a GitHub App makes PR comments and reactions appear as the app's bot user
+(e.g. "brainiac-bot") instead of your personal account. This gives each agent a
+distinct identity in PR conversations.
+
+1. Go to **Settings → Developer settings → GitHub Apps → New GitHub App**
+2. Set the following:
+   - **Name**: e.g. `brainiac-bot`
+   - **Homepage URL**: your Brainiac instance URL
+   - **Webhook URL**: leave blank (webhook is handled by the plugin directly)
+   - **Permissions**:
+     - Pull requests: Read & Write
+     - Issues: Read & Write
+     - Contents: Read (for fetching PR diffs)
+   - **Events**: uncheck everything (events come via the repo webhook, not the app)
+3. Create the app and note the **App ID** from the app's settings page
+4. Generate a private key (`.pem` file) and save it to `~/.brainiac/github-app-private-key.pem`
+5. Install the app on your org/repos and note the **Installation ID** from the URL:
+   `https://github.com/settings/installations/INSTALLATION_ID`
+6. Add the credentials to your `github.json`:
+   ```json
+   {
+     "app": {
+       "id": "123456",
+       "private_key_path": "~/.brainiac/github-app-private-key.pem",
+       "installation_id": "78901234"
+     }
+   }
+   ```
+
+If app credentials are not configured, the plugin falls back to using the `gh` CLI
+(which authenticates as your personal GitHub account).
+
+### Environment Variables
+
+As an alternative to config file values, you can set:
+
+- `GITHUB_WEBHOOK_SECRET` — webhook signature secret
+- `GITHUB_APP_ID` — GitHub App ID
+- `GITHUB_APP_PRIVATE_KEY_PATH` — path to the `.pem` private key file
+- `GITHUB_APP_INSTALLATION_ID` — installation ID
 
 ### GitHub Webhook Setup
 

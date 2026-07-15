@@ -4,6 +4,7 @@ require_relative "github/version"
 require_relative "github/metadata"
 require_relative "github/cli"
 require_relative "github/config"
+require_relative "github/app_client"
 require_relative "github/prompts"
 require_relative "github/notifications"
 require_relative "github/handler"
@@ -68,7 +69,11 @@ module Brainiac
             comment_body = "💥 **#{agent_display} crashed** (exit code #{ctx[:exit_status]})\n\nLog: `#{ctx[:log_file]}`#{snippet_block}"
 
             begin
-              run_cmd("gh", "pr", "comment", pr_number.to_s, "--repo", repo_name, "--body", comment_body, chdir: work_dir)
+              if AppClient.configured?
+                AppClient.create_comment(repo_name, pr_number, comment_body)
+              else
+                run_cmd("gh", "pr", "comment", pr_number.to_s, "--repo", repo_name, "--body", comment_body, chdir: work_dir)
+              end
               LOG.info "[GitHub] Posted crash comment on PR ##{pr_number}"
             rescue StandardError => e
               LOG.error "[GitHub] Failed to post crash comment: #{e.message}"

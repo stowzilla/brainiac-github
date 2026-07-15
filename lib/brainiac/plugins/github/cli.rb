@@ -51,10 +51,27 @@ module Brainiac
 
             config = JSON.parse(File.read(config_file))
             secret = config["webhook_secret"]
+            app_config = config["app"] || {}
+
             puts "GitHub Configuration:"
             puts "  Config file: #{config_file}"
             puts "  Webhook secret: #{secret && !secret.empty? ? "#{secret[0..5]}..." : "(not set)"}"
             puts "  Repos: #{config.fetch("repos", {}).keys.join(", ").then { |s| s.empty? ? "(none)" : s }}"
+            puts ""
+            puts "  App Authentication:"
+            if app_config["id"] && !app_config["id"].to_s.empty?
+              puts "    App ID: #{app_config["id"]}"
+              puts "    Private key: #{app_config["private_key_path"] || "(not set)"}"
+              puts "    Installation ID: #{app_config["installation_id"] || "(not set)"}"
+              key_path = app_config["private_key_path"]
+              if key_path && File.exist?(File.expand_path(key_path))
+                puts "    Status: ✅ configured"
+              else
+                puts "    Status: ⚠️  private key file not found"
+              end
+            else
+              puts "    Status: not configured (using gh CLI fallback)"
+            end
           end
 
           def cmd_status

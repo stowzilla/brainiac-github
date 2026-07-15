@@ -109,12 +109,11 @@ module Brainiac
                 LOG.warn "Card has no number — can't dispatch review"
                 return [200, { status: "ignored", reason: "card has no number" }.to_json]
               end
-              card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
             else
               card_info = {}
               card_number = nil
-              card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
+            card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
 
@@ -151,9 +150,14 @@ module Brainiac
             project_key, project_config = project_result
             pr_number = issue["number"]
 
-            pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
-                              chdir: project_config["repo_path"])
-            branch = JSON.parse(pr_data)["branch"]
+            if AppClient.configured?
+              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}")
+              branch = pr_response.dig("head", "ref")
+            else
+              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
+                                chdir: project_config["repo_path"])
+              branch = JSON.parse(pr_data)["branch"]
+            end
 
             result = find_work_item_by_branch(branch)
 
@@ -167,12 +171,11 @@ module Brainiac
                 return [200, { status: "ignored", reason: "no active worktree" }.to_json]
               end
 
-              card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
             else
               card_number = nil
               worktree = project_config["repo_path"]
-              card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
             end
+            card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             if session_active?(card_key)
               LOG.info "Skipping PR comment on #{card_key} — agent session already active"
@@ -307,8 +310,12 @@ module Brainiac
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
                                   repo_name, worktree, project_key, project_config)
             Thread.new do
-              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/comments/#{comment_id}/reactions",
-                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: worktree)
+              if AppClient.configured?
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/comments/#{comment_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: worktree)
+              end
             rescue StandardError => e
               LOG.warn "Could not add reaction to comment: #{e.message}"
             end
@@ -341,8 +348,12 @@ module Brainiac
                                  repo_name, project_key, project_config, repo_path)
             review_id = review["id"]
             Thread.new do
-              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
-                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              if AppClient.configured?
+                AppClient.create_review_reaction(repo_name, review_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              end
 
               react_to_review_comments(review_id, pr_number, repo_name, repo_path)
             rescue StandardError => e
@@ -393,10 +404,16 @@ module Brainiac
           end
 
           def fetch_pr_review_comments(pr_number, repo)
-            output = run_cmd("gh", "api", "/repos/#{repo}/pulls/#{pr_number}/comments",
-                             "--jq", ".[] | {path, line, body, user: .user.login}",
-                             chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
-            output.lines.map { |line| JSON.parse(line) }
+            if AppClient.configured?
+              response = AppClient.get("/repos/#{repo}/pulls/#{pr_number}/comments")
+              # Response is an array of comment objects
+              response.map { |c| { "path" => c["path"], "line" => c["line"], "body" => c["body"], "user" => c.dig("user", "login") } }
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo}/pulls/#{pr_number}/comments",
+                               "--jq", ".[] | {path, line, body, user: .user.login}",
+                               chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
+              output.lines.map { |line| JSON.parse(line) }
+            end
           rescue StandardError => e
             LOG.warn "Could not fetch PR review comments: #{e.message}"
             []
@@ -405,13 +422,22 @@ module Brainiac
           # React with 👀 to each individual comment in a review submission.
           # This makes reactions visible on line-level file comments, not just the review wrapper.
           def react_to_review_comments(review_id, pr_number, repo_name, repo_path)
-            output = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments",
-                             "--jq", ".[].id", chdir: repo_path)
-            comment_ids = output.lines.map(&:strip).reject(&:empty?)
+            if AppClient.configured?
+              comments = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments")
+              comment_ids = comments.map { |c| c["id"] }
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments",
+                               "--jq", ".[].id", chdir: repo_path)
+              comment_ids = output.lines.map(&:strip).reject(&:empty?)
+            end
 
             comment_ids.each do |comment_id|
-              run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/comments/#{comment_id}/reactions",
-                      "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              if AppClient.configured?
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              else
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/comments/#{comment_id}/reactions",
+                        "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
+              end
             end
           rescue StandardError => e
             LOG.warn "Could not react to review comments: #{e.message}"
@@ -420,12 +446,20 @@ module Brainiac
           # Lightweight recent PR comment context for intent classification.
           # Returns "author: message" format (last 5 issue comments on the PR).
           def fetch_pr_intent_context(pr_number, repo_name)
-            output = run_cmd("gh", "api", "/repos/#{repo_name}/issues/#{pr_number}/comments",
-                             "--jq", ".[-5:] | .[] | \"\\(.user.login): \\(.body[0:200])\"",
-                             chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
-            return nil if output.strip.empty?
+            if AppClient.configured?
+              comments = AppClient.get("/repos/#{repo_name}/issues/#{pr_number}/comments")
+              entries = comments.last(5).map { |c| "#{c.dig("user", "login")}: #{c["body"]&.slice(0, 200)}" }
+              return nil if entries.empty?
 
-            output.strip
+              entries.join("\n")
+            else
+              output = run_cmd("gh", "api", "/repos/#{repo_name}/issues/#{pr_number}/comments",
+                               "--jq", ".[-5:] | .[] | \"\\(.user.login): \\(.body[0:200])\"",
+                               chdir: PROJECTS.values.first&.dig("repo_path") || Dir.pwd)
+              return nil if output.strip.empty?
+
+              output.strip
+            end
           rescue StandardError => e
             LOG.warn "[GitHub] Could not fetch intent context for PR ##{pr_number}: #{e.message}" if defined?(LOG)
             nil
