@@ -49,17 +49,23 @@ distinct identity in PR conversations.
 2. Set the following:
    - **Name**: e.g. `brainiac-bot`
    - **Homepage URL**: your Brainiac instance URL
-   - **Webhook URL**: leave blank (webhook is handled by the plugin directly)
-   - **Permissions**:
-     - Pull requests: Read & Write
-     - Issues: Read & Write
-     - Contents: Read (for fetching PR diffs)
-   - **Events**: uncheck everything (events come via the repo webhook, not the app)
-3. Create the app and note the **App ID** from the app's settings page
-4. Generate a private key (`.pem` file) and save it to `~/.brainiac/github-app-private-key.pem`
-5. Install the app on your org/repos and note the **Installation ID** from the URL:
+   - **Webhook URL**: `https://your-ngrok.ngrok-free.app/github` (same URL used in the repo webhook setup below)
+   - **Webhook secret**: paste the same `webhook_secret` from your `github.json`
+3. Set **Permissions** (under "Repository permissions"):
+   - **Contents**: Read-only
+   - **Issues**: Read & Write
+   - **Pull requests**: Read & Write
+4. **Subscribe to events**:
+   - Issue comment
+   - Issues
+   - Pull request
+   - Pull request review
+   - Workflow run
+5. Create the app and note the **App ID** from the app's settings page
+6. Generate a private key (`.pem` file) and save it to `~/.brainiac/github-app-private-key.pem`
+7. Install the app on your org/repos and note the **Installation ID** from the URL:
    `https://github.com/settings/installations/INSTALLATION_ID`
-6. Add the credentials to your `github.json`:
+8. Add the credentials to your `github.json`:
    ```json
    {
      "app": {
