@@ -93,6 +93,14 @@ module Brainiac
             end
           end
 
+          # Public accessor for installation tokens (used to inject GH_TOKEN into agent env).
+          # Returns the raw token string, or nil on failure.
+          def installation_token_for(agent_key = nil, repo_owner: nil)
+            installation_token(agent_key, repo_owner: repo_owner)
+          rescue StandardError
+            nil
+          end
+
           private
 
           def request(method, path, body = nil, agent_key: nil)

@@ -257,6 +257,22 @@ module Brainiac
             nil
           end
 
+          # Generate a GH_TOKEN env var for the agent process so `gh` CLI
+          # authenticates as the app bot instead of the user's personal account.
+          # Returns empty hash if app credentials aren't configured for this agent.
+          def github_agent_env(agent_name, repo_name)
+            return {} unless AppClient.configured?(agent_name)
+
+            repo_owner = repo_name.split("/").first
+            token = AppClient.installation_token_for(agent_name, repo_owner: repo_owner)
+            return {} unless token
+
+            { "GH_TOKEN" => token }
+          rescue StandardError => e
+            LOG.warn "[GitHub] Could not generate agent token: #{e.message}"
+            {}
+          end
+
           # Extract the card number from a work item info hash, supporting both
           # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
           def extract_card_number(card_info)
@@ -351,6 +367,7 @@ module Brainiac
                                    agent_name: agent_name, channel: :github)
 
             intent_ctx = fetch_pr_intent_context(pr_number, repo_name, agent_name)
+            agent_env = github_agent_env(agent_name, repo_name)
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: worktree,
                                               log_name: "pr-comment-#{pr_number}",
                                               model: detect_model(project_config, text: comment_body),
@@ -358,7 +375,7 @@ module Brainiac
                                               agent_name: agent_name, source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
                                               message: comment_body, channel: "GitHub PR comment",
-                                              context: intent_ctx)
+                                              context: intent_ctx, env: agent_env)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -398,13 +415,15 @@ module Brainiac
                                                                       project_key: project_key),
                                    agent_name: agent_name, channel: :github)
 
+            agent_env = github_agent_env(agent_name, repo_name)
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: work_dir,
                                               log_name: "review-#{card_number || "pr-#{pr_number}"}",
                                               agent_name: agent_name,
                                               source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
                                               message: review["body"], channel: "GitHub PR review",
-                                              context: fetch_pr_intent_context(pr_number, repo_name, agent_name))
+                                              context: fetch_pr_intent_context(pr_number, repo_name, agent_name),
+                                              env: agent_env)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
