@@ -309,9 +309,11 @@ module Brainiac
 
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
                                   repo_name, worktree, project_key, project_config)
+            agent_name = agent_name_for(project_config)
+
             Thread.new do
-              if AppClient.configured?
-                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              if AppClient.configured?(agent_name)
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes", agent_key: agent_name)
               else
                 run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/comments/#{comment_id}/reactions",
                         "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: worktree)
@@ -320,7 +322,6 @@ module Brainiac
               LOG.warn "Could not add reaction to comment: #{e.message}"
             end
 
-            agent_name = agent_name_for(project_config)
             prompt = render_prompt(Prompts::PR_COMMENT,
                                    { "CARD_NUMBER" => card_number || "PR-#{pr_number}",
                                      "CARD_ID" => card_number || "PR-#{pr_number}",
@@ -347,20 +348,21 @@ module Brainiac
           def dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
                                  repo_name, project_key, project_config, repo_path)
             review_id = review["id"]
+            agent_name = agent_name_for(project_config)
+
             Thread.new do
-              if AppClient.configured?
-                AppClient.create_review_reaction(repo_name, review_id, "eyes")
+              if AppClient.configured?(agent_name)
+                AppClient.create_review_reaction(repo_name, review_id, "eyes", agent_key: agent_name)
               else
                 run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
                         "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
               end
 
-              react_to_review_comments(review_id, pr_number, repo_name, repo_path)
+              react_to_review_comments(review_id, pr_number, repo_name, repo_path, agent_name)
             rescue StandardError => e
               LOG.warn "Could not add reaction to review: #{e.message}"
             end
 
-            agent_name = agent_name_for(project_config)
             Brainiac.emit(:pr_review_received, card_number: card_number, reviewer: reviewer,
                                                agent_name: agent_name, project_config: project_config, repo_path: repo_path)
 
@@ -421,9 +423,9 @@ module Brainiac
 
           # React with 👀 to each individual comment in a review submission.
           # This makes reactions visible on line-level file comments, not just the review wrapper.
-          def react_to_review_comments(review_id, pr_number, repo_name, repo_path)
-            if AppClient.configured?
-              comments = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments")
+          def react_to_review_comments(review_id, pr_number, repo_name, repo_path, agent_key = nil)
+            if AppClient.configured?(agent_key)
+              comments = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments", agent_key: agent_key)
               comment_ids = comments.map { |c| c["id"] }
             else
               output = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}/reviews/#{review_id}/comments",
@@ -432,8 +434,8 @@ module Brainiac
             end
 
             comment_ids.each do |comment_id|
-              if AppClient.configured?
-                AppClient.create_comment_reaction(repo_name, comment_id, "eyes")
+              if AppClient.configured?(agent_key)
+                AppClient.create_comment_reaction(repo_name, comment_id, "eyes", agent_key: agent_key)
               else
                 run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/comments/#{comment_id}/reactions",
                         "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)

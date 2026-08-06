@@ -64,13 +64,14 @@ module Brainiac
 
             work_dir = source_context[:work_dir] || Dir.pwd
             agent_display = ctx[:agent_name] || "Agent"
+            agent_key = ctx[:agent_key]
             snippet = ctx[:snippet]
             snippet_block = snippet ? "\n```\n#{snippet[-1500..]}\n```" : ""
             comment_body = "💥 **#{agent_display} crashed** (exit code #{ctx[:exit_status]})\n\nLog: `#{ctx[:log_file]}`#{snippet_block}"
 
             begin
-              if AppClient.configured?
-                AppClient.create_comment(repo_name, pr_number, comment_body)
+              if AppClient.configured?(agent_key)
+                AppClient.create_comment(repo_name, pr_number, comment_body, agent_key: agent_key)
               else
                 run_cmd("gh", "pr", "comment", pr_number.to_s, "--repo", repo_name, "--body", comment_body, chdir: work_dir)
               end

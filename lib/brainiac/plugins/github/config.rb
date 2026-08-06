@@ -30,25 +30,47 @@ module Brainiac
             @config["webhook_secret"] || ENV.fetch("GITHUB_WEBHOOK_SECRET", nil)
           end
 
-          # GitHub App credentials — all three must be present for App auth to work.
+          # Per-agent app credentials from the "apps" hash.
+          # Falls back to the shared "app" config if no per-agent entry exists.
 
-          def app_id
-            @config.dig("app", "id")&.to_s || ENV.fetch("GITHUB_APP_ID", nil)
+          def app_id(agent_key = nil)
+            per_agent_value(agent_key, "id") ||
+              @config.dig("app", "id")&.to_s ||
+              ENV.fetch("GITHUB_APP_ID", nil)
           end
 
-          def private_key_path
-            path = @config.dig("app", "private_key_path") || ENV.fetch("GITHUB_APP_PRIVATE_KEY_PATH", nil)
+          def private_key_path(agent_key = nil)
+            path = per_agent_value(agent_key, "private_key_path") ||
+                   @config.dig("app", "private_key_path") ||
+                   ENV.fetch("GITHUB_APP_PRIVATE_KEY_PATH", nil)
             return nil unless path
 
             expanded = File.expand_path(path)
             File.exist?(expanded) ? expanded : nil
           end
 
-          def installation_id
-            @config.dig("app", "installation_id")&.to_s || ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
+          def installation_id(agent_key = nil)
+            per_agent_value(agent_key, "installation_id") ||
+              @config.dig("app", "installation_id")&.to_s ||
+              ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
+          end
+
+          # Returns the agent key that should be used for a given context.
+          # If per-agent apps are configured and the agent has an entry, returns that key.
+          # Otherwise returns nil (use shared app).
+          def agent_app_configured?(agent_key)
+            return false unless agent_key
+
+            !!@config.dig("apps", agent_key)
           end
 
           private
+
+          def per_agent_value(agent_key, field)
+            return nil unless agent_key
+
+            @config.dig("apps", agent_key, field)&.to_s
+          end
 
           def load_config
             return {} unless File.exist?(CONFIG_FILE)
