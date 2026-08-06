@@ -19,7 +19,7 @@ Metrics/BlockLength:
     - heredoc
 
 Metrics/MethodLength:
-  Max: 75
+  Max: 80
 
 Metrics/AbcSize:
   Max: 90

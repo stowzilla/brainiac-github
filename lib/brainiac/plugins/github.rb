@@ -90,6 +90,13 @@ module Brainiac
             request.body.rewind
             payload_body = request.body.read
 
+            # Dedup: GitHub sends X-GitHub-Delivery as a unique ID per webhook delivery.
+            # Drop duplicates (can occur due to threading or retries).
+            delivery_id = request.env["HTTP_X_GITHUB_DELIVERY"]
+            if delivery_id && Brainiac::Plugins::Github.already_delivered?(delivery_id)
+              halt 200, { status: "ignored", reason: "duplicate delivery" }.to_json
+            end
+
             Brainiac::Plugins::Github.verify_signature!(request, payload_body)
 
             payload = JSON.parse(payload_body)
@@ -174,6 +181,21 @@ module Brainiac
         halt 500, { error: "GitHub webhook secret not configured" }.to_json unless secret
         computed = "sha256=#{OpenSSL::HMAC.hexdigest("sha256", secret, payload_body)}"
         halt 403, { error: "Invalid GitHub signature" }.to_json unless Rack::Utils.secure_compare(signature, computed)
+      end
+
+      # Track recent delivery IDs to prevent duplicate processing.
+      # Thread-safe via Mutex. Keeps last 100 IDs.
+      @recent_deliveries = []
+      @delivery_mutex = Mutex.new
+
+      def self.already_delivered?(delivery_id)
+        @delivery_mutex.synchronize do
+          return true if @recent_deliveries.include?(delivery_id)
+
+          @recent_deliveries << delivery_id
+          @recent_deliveries.shift if @recent_deliveries.size > 100
+          false
+        end
       end
     end
   end
