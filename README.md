@@ -75,28 +75,36 @@ conversations.
    - **Homepage URL**: your Brainiac instance URL
    - **Webhook URL**: `https://your-ngrok.ngrok-free.app/github`
    - **Webhook secret**: paste the same `webhook_secret` from your `github.json`
-3. Set **Permissions** (under "Repository permissions"):
+3. Under **"Where can this GitHub App be installed?"**, select **"Any account"**.
+   This allows installing the app on both personal accounts and organizations
+   (e.g. both `ardavis` and `stowzilla`). The app is not publicly listed — other
+   users would need the direct install link to find it.
+4. Set **Permissions** (under "Repository permissions"):
    - **Contents**: Read-only
    - **Issues**: Read & Write
    - **Pull requests**: Read & Write
-4. **Subscribe to events**:
+5. **Subscribe to events**:
    - Issue comment
    - Issues
    - Pull request
    - Pull request review
    - Workflow run
-5. Create the app and note the **App ID** from the app's settings page
-6. Generate a private key — on the app's settings page, scroll to "Private keys"
+6. Create the app and note the **App ID** from the app's settings page
+7. Generate a private key — on the app's settings page, scroll to "Private keys"
    and click **Generate a private key**. Your browser will download a `.pem` file.
    Move it somewhere safe:
    ```bash
    mv ~/Downloads/*.private-key.pem ~/.brainiac/github-app-galen.pem
    chmod 600 ~/.brainiac/github-app-galen.pem
    ```
-7. Upload an **avatar** for the app (the agent's profile picture)
-8. Install the app on your org/repos and note the **Installation ID** from the URL:
-   `https://github.com/settings/installations/INSTALLATION_ID`
-9. Repeat steps 1–8 for each agent
+8. Upload an **avatar** for the app (the agent's profile picture)
+9. **Install the app** on each account/org where you have repos:
+   - Go to the app's settings → "Install App" tab
+   - Install on your personal account (e.g. `ardavis`) — note the **Installation ID**
+     from the URL: `https://github.com/settings/installations/INSTALLATION_ID`
+   - Install on your org (e.g. `stowzilla`) — note that Installation ID too
+   - Each account/org gets its own Installation ID
+10. Repeat steps 1–9 for each agent
 
 Add per-agent credentials to `github.json`:
 
