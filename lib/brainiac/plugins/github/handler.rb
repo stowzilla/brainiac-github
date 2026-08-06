@@ -368,14 +368,16 @@ module Brainiac
 
             intent_ctx = fetch_pr_intent_context(pr_number, repo_name, agent_name)
             agent_env = github_agent_env(agent_name, repo_name)
-            pid, log_file = run_agent(prompt, project_config: project_config, chdir: worktree,
-                                              log_name: "pr-comment-#{pr_number}",
-                                              model: detect_model(project_config, text: comment_body),
-                                              effort: detect_effort(project_config, text: comment_body),
-                                              agent_name: agent_name, source: :github,
-                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
-                                              message: comment_body, channel: "GitHub PR comment",
-                                              context: intent_ctx, env: agent_env)
+            run_agent_opts = { project_config: project_config, chdir: worktree,
+                               log_name: "pr-comment-#{pr_number}",
+                               model: detect_model(project_config, text: comment_body),
+                               effort: detect_effort(project_config, text: comment_body),
+                               agent_name: agent_name, source: :github,
+                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
+                               message: comment_body, channel: "GitHub PR comment",
+                               context: intent_ctx }
+            run_agent_opts[:env] = agent_env if method(:run_agent).parameters.flatten.include?(:env)
+            pid, log_file = run_agent(prompt, **run_agent_opts)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
@@ -416,14 +418,15 @@ module Brainiac
                                    agent_name: agent_name, channel: :github)
 
             agent_env = github_agent_env(agent_name, repo_name)
-            pid, log_file = run_agent(prompt, project_config: project_config, chdir: work_dir,
-                                              log_name: "review-#{card_number || "pr-#{pr_number}"}",
-                                              agent_name: agent_name,
-                                              source: :github,
-                                              source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
-                                              message: review["body"], channel: "GitHub PR review",
-                                              context: fetch_pr_intent_context(pr_number, repo_name, agent_name),
-                                              env: agent_env)
+            run_agent_opts = { project_config: project_config, chdir: work_dir,
+                               log_name: "review-#{card_number || "pr-#{pr_number}"}",
+                               agent_name: agent_name,
+                               source: :github,
+                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
+                               message: review["body"], channel: "GitHub PR review",
+                               context: fetch_pr_intent_context(pr_number, repo_name, agent_name) }
+            run_agent_opts[:env] = agent_env if method(:run_agent).parameters.flatten.include?(:env)
+            pid, log_file = run_agent(prompt, **run_agent_opts)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
