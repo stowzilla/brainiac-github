@@ -28,7 +28,10 @@ Config lives at `~/.brainiac/github.json`:
     "galen": {
       "id": "111111",
       "private_key_path": "~/.brainiac/github-app-galen.pem",
-      "installation_id": "11111111"
+      "installations": {
+        "stowzilla": "11111111",
+        "ardavis": "22222222"
+      }
     }
   },
   "repos": {}
@@ -104,20 +107,39 @@ Add per-agent credentials to `github.json`:
     "galen": {
       "id": "111111",
       "private_key_path": "~/.brainiac/github-app-galen.pem",
-      "installation_id": "11111111"
+      "installations": {
+        "stowzilla": "11111111",
+        "ardavis": "22222222"
+      }
     },
     "glados": {
-      "id": "222222",
-      "private_key_path": "~/.brainiac/github-app-glados.pem",
-      "installation_id": "22222222"
-    },
-    "threepio": {
       "id": "333333",
-      "private_key_path": "~/.brainiac/github-app-threepio.pem",
-      "installation_id": "33333333"
+      "private_key_path": "~/.brainiac/github-app-glados.pem",
+      "installations": {
+        "stowzilla": "33333333",
+        "ardavis": "44444444"
+      }
     }
   },
   "repos": {}
+}
+```
+
+The `installations` hash maps GitHub account/org names to their installation IDs.
+When the plugin makes an API call, it picks the correct installation based on the
+repo owner (e.g. `stowzilla/brainiac` uses the `stowzilla` installation).
+
+If you only have one installation, you can use the flat `installation_id` key instead:
+
+```json
+{
+  "apps": {
+    "galen": {
+      "id": "111111",
+      "private_key_path": "~/.brainiac/github-app-galen.pem",
+      "installation_id": "11111111"
+    }
+  }
 }
 ```
 

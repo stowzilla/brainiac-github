@@ -49,9 +49,27 @@ module Brainiac
             File.exist?(expanded) ? expanded : nil
           end
 
-          def installation_id(agent_key = nil)
-            per_agent_value(agent_key, "installation_id") ||
-              @config.dig("app", "installation_id")&.to_s ||
+          def installation_id(agent_key = nil, repo_owner: nil)
+            # Check per-agent config first
+            if agent_key
+              agent_conf = @config.dig("apps", agent_key)
+              if agent_conf
+                # Per-agent may have multiple installations keyed by owner
+                if repo_owner && agent_conf["installations"]
+                  return agent_conf.dig("installations", repo_owner)&.to_s || agent_conf["installation_id"]&.to_s
+                end
+
+                return agent_conf["installation_id"]&.to_s if agent_conf["installation_id"]
+              end
+            end
+
+            # Shared app config — check installations hash first, then flat installation_id
+            if repo_owner && @config.dig("app", "installations")
+              found = @config.dig("app", "installations", repo_owner)&.to_s
+              return found if found
+            end
+
+            @config.dig("app", "installation_id")&.to_s ||
               ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
           end
 

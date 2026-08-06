@@ -96,7 +96,8 @@ module Brainiac
           private
 
           def request(method, path, body = nil, agent_key: nil)
-            token = installation_token(agent_key)
+            repo_owner = extract_repo_owner(path)
+            token = installation_token(agent_key, repo_owner: repo_owner)
             uri = URI("#{GITHUB_API}#{path}")
 
             http = Net::HTTP.new(uri.host, uri.port)
@@ -125,6 +126,12 @@ module Brainiac
             JSON.parse(response.body)
           end
 
+          # Extract the repo owner from an API path like "/repos/stowzilla/brainiac/pulls/1"
+          def extract_repo_owner(path)
+            match = path.match(%r{^/repos/([^/]+)/})
+            match&.[](1)
+          end
+
           # Generate a short-lived JWT signed with the App's private key.
           # Used to request an installation access token.
           def generate_jwt(agent_key = nil)
@@ -142,16 +149,19 @@ module Brainiac
 
           # Fetch or return a cached installation access token.
           # Tokens are valid for 1 hour; we refresh 60s early.
-          # Cache key is the agent_key (nil for shared app).
-          def installation_token(agent_key = nil)
-            cache_key = agent_key || :shared
+          # Cache key includes agent_key and repo_owner for proper scoping.
+          def installation_token(agent_key = nil, repo_owner: nil)
+            inst_id = Config.installation_id(agent_key, repo_owner: repo_owner)
+            raise "No installation ID configured#{" for #{repo_owner}" if repo_owner}" unless inst_id
+
+            cache_key = "#{agent_key || "shared"}-#{inst_id}"
 
             @mutex.synchronize do
               cached = @tokens[cache_key]
               return cached[:token] if cached && Time.now.to_i < cached[:expires_at]
 
               jwt = generate_jwt(agent_key)
-              uri = URI("#{GITHUB_API}/app/installations/#{Config.installation_id(agent_key)}/access_tokens")
+              uri = URI("#{GITHUB_API}/app/installations/#{inst_id}/access_tokens")
 
               http = Net::HTTP.new(uri.host, uri.port)
               http.use_ssl = true
