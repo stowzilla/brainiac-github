@@ -82,6 +82,15 @@ module Brainiac
             !!@config.dig("apps", agent_key)
           end
 
+          # Check if a repo owner is in the allowed_owners list.
+          # If allowed_owners is not configured (empty/missing), all owners are allowed.
+          def owner_allowed?(owner)
+            allowed = @config["allowed_owners"]
+            return true unless allowed.is_a?(Array) && !allowed.empty?
+
+            allowed.include?(owner)
+          end
+
           private
 
           def per_agent_value(agent_key, field)

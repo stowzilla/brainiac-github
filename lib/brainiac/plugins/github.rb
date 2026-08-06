@@ -95,6 +95,11 @@ module Brainiac
             payload = JSON.parse(payload_body)
             event = request.env["HTTP_X_GITHUB_EVENT"]
 
+            repo_owner = payload.dig("repository", "owner", "login")
+            if repo_owner && !Brainiac::Plugins::Github::Config.owner_allowed?(repo_owner)
+              halt 403, { error: "Repository owner not in allowed_owners", owner: repo_owner }.to_json
+            end
+
             reload_projects!
             reload_agent_registry!
             Brainiac::Plugins::Github::Config.reload!

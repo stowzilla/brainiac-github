@@ -24,6 +24,7 @@ Config lives at `~/.brainiac/github.json`:
 ```json
 {
   "webhook_secret": "your-github-webhook-secret",
+  "allowed_owners": ["stowzilla", "ardavis"],
   "apps": {
     "galen": {
       "id": "111111",
@@ -43,6 +44,7 @@ Or with a single shared app (see [GitHub App Setup](#github-app-setup) for detai
 ```json
 {
   "webhook_secret": "your-github-webhook-secret",
+  "allowed_owners": ["stowzilla", "ardavis"],
   "app": {
     "id": "123456",
     "private_key_path": "~/.brainiac/github-app-private-key.pem",
@@ -51,6 +53,11 @@ Or with a single shared app (see [GitHub App Setup](#github-app-setup) for detai
   "repos": {}
 }
 ```
+
+The `allowed_owners` array restricts which GitHub accounts/orgs can trigger your
+agents. Events from repos not owned by a listed account are rejected with a 403
+before any processing occurs. If omitted, all owners are accepted (filtered
+downstream by project matching instead).
 
 Generate a webhook secret:
 

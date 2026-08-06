@@ -1,5 +1,6 @@
 {
   "webhook_secret": "",
+  "allowed_owners": [],
   "apps": {},
   "app": {
     "id": "",
