@@ -60,7 +60,12 @@ module Brainiac
                   return agent_conf.dig("installations", repo_owner)&.to_s || agent_conf["installation_id"]&.to_s
                 end
 
+                # Flat installation_id
                 return agent_conf["installation_id"]&.to_s if agent_conf["installation_id"]
+
+                # No repo_owner specified but installations hash exists — return first available
+                # (used by configured? check where repo_owner isn't known yet)
+                return agent_conf["installations"].values.first&.to_s if agent_conf["installations"]&.any?
               end
             end
 

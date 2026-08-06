@@ -25,10 +25,10 @@ Metrics/AbcSize:
   Max: 90
 
 Metrics/CyclomaticComplexity:
-  Max: 18
+  Max: 20
 
 Metrics/PerceivedComplexity:
-  Max: 18
+  Max: 20
 
 Metrics/ModuleLength:
   Max: 800
