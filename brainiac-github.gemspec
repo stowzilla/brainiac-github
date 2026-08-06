@@ -18,6 +18,7 @@ Gem::Specification.new do |s|
   s.require_paths = ["lib"]
 
   s.add_dependency "brainiac", ">= 0.0.14"
+  s.add_dependency "jwt", "~> 2.9"
 
   s.add_development_dependency "minitest", "~> 5.25"
   s.add_development_dependency "rake", "~> 13.0"

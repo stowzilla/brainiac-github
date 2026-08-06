@@ -22,11 +22,30 @@ module Brainiac
 
             @config = load_config
             @last_mtime = File.exist?(CONFIG_FILE) ? File.mtime(CONFIG_FILE) : nil
+            AppClient.reset! if defined?(AppClient)
             LOG.info "[GitHub] Reloaded configuration"
           end
 
           def webhook_secret
             @config["webhook_secret"] || ENV.fetch("GITHUB_WEBHOOK_SECRET", nil)
+          end
+
+          # GitHub App credentials — all three must be present for App auth to work.
+
+          def app_id
+            @config.dig("app", "id")&.to_s || ENV.fetch("GITHUB_APP_ID", nil)
+          end
+
+          def private_key_path
+            path = @config.dig("app", "private_key_path") || ENV.fetch("GITHUB_APP_PRIVATE_KEY_PATH", nil)
+            return nil unless path
+
+            expanded = File.expand_path(path)
+            File.exist?(expanded) ? expanded : nil
+          end
+
+          def installation_id
+            @config.dig("app", "installation_id")&.to_s || ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
           end
 
           private
