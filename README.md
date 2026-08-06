@@ -24,6 +24,27 @@ Config lives at `~/.brainiac/github.json`:
 ```json
 {
   "webhook_secret": "your-github-webhook-secret",
+  "allowed_owners": ["stowzilla", "ardavis"],
+  "apps": {
+    "galen": {
+      "id": "111111",
+      "private_key_path": "~/.brainiac/github-app-galen.pem",
+      "installations": {
+        "stowzilla": "11111111",
+        "ardavis": "22222222"
+      }
+    }
+  },
+  "repos": {}
+}
+```
+
+Or with a single shared app (see [GitHub App Setup](#github-app-setup) for details):
+
+```json
+{
+  "webhook_secret": "your-github-webhook-secret",
+  "allowed_owners": ["stowzilla", "ardavis"],
   "app": {
     "id": "123456",
     "private_key_path": "~/.brainiac/github-app-private-key.pem",
@@ -33,54 +54,160 @@ Config lives at `~/.brainiac/github.json`:
 }
 ```
 
+The `allowed_owners` array restricts which GitHub accounts/orgs can trigger your
+agents. Events from repos not owned by a listed account are rejected with a 403
+before any processing occurs. If omitted, all owners are accepted (filtered
+downstream by project matching instead).
+
 Generate a webhook secret:
 
 ```bash
 ruby -rsecurerandom -e 'puts SecureRandom.hex(20)'
 ```
 
-### GitHub App Setup (Recommended)
+### GitHub App Setup
 
-Using a GitHub App makes PR comments and reactions appear as the app's bot user
-(e.g. "brainiac-bot") instead of your personal account. This gives each agent a
-distinct identity in PR conversations.
+Each GitHub App gives an agent its own identity (avatar, name) on PR comments
+and reactions — the same way each Discord bot has its own token.
+
+#### Per-Agent Apps (Recommended)
+
+Create a separate GitHub App for **each** agent that posts on PRs (e.g. Galen,
+GLaDOS, Threepio). This gives each agent a distinct avatar and username in PR
+conversations.
 
 1. Go to **Settings → Developer settings → GitHub Apps → New GitHub App**
 2. Set the following:
-   - **Name**: e.g. `brainiac-bot`
+   - **Name**: the agent's name, e.g. `galen-bot`, `glados-bot`
    - **Homepage URL**: your Brainiac instance URL
-   - **Webhook URL**: leave blank (webhook is handled by the plugin directly)
-   - **Permissions**:
-     - Pull requests: Read & Write
-     - Issues: Read & Write
-     - Contents: Read (for fetching PR diffs)
-   - **Events**: uncheck everything (events come via the repo webhook, not the app)
-3. Create the app and note the **App ID** from the app's settings page
-4. Generate a private key (`.pem` file) and save it to `~/.brainiac/github-app-private-key.pem`
-5. Install the app on your org/repos and note the **Installation ID** from the URL:
-   `https://github.com/settings/installations/INSTALLATION_ID`
-6. Add the credentials to your `github.json`:
-   ```json
-   {
-     "app": {
-       "id": "123456",
-       "private_key_path": "~/.brainiac/github-app-private-key.pem",
-       "installation_id": "78901234"
-     }
-   }
+   - **Webhook URL**: `https://your-ngrok.ngrok-free.app/github`
+   - **Webhook secret**: paste the same `webhook_secret` from your `github.json`
+3. Under **"Where can this GitHub App be installed?"**, select **"Any account"**.
+   This allows installing the app on both personal accounts and organizations
+   (e.g. both `ardavis` and `stowzilla`). The app is not publicly listed — other
+   users would need the direct install link to find it.
+4. Set **Permissions** (under "Repository permissions"):
+   - **Contents**: Read-only
+   - **Issues**: Read & Write
+   - **Pull requests**: Read & Write
+5. **Subscribe to events**:
+   - Issue comment
+   - Issues
+   - Pull request
+   - Pull request review
+   - Workflow run
+6. Create the app and note the **App ID** from the app's settings page
+7. Generate a private key — on the app's settings page, scroll to "Private keys"
+   and click **Generate a private key**. Your browser will download a `.pem` file.
+   Move it somewhere safe:
+   ```bash
+   mv ~/Downloads/*.private-key.pem ~/.brainiac/github-app-galen.pem
+   chmod 600 ~/.brainiac/github-app-galen.pem
+   ```
+8. Upload an **avatar** for the app (the agent's profile picture)
+9. **Install the app** on each account/org where you have repos:
+   - Go to the app's settings → "Install App" tab
+   - Install on your personal account (e.g. `ardavis`) — note the **Installation ID**
+     from the URL: `https://github.com/settings/installations/INSTALLATION_ID`
+   - Install on your org (e.g. `stowzilla`) — note that Installation ID too
+   - Each account/org gets its own Installation ID
+10. Repeat steps 1–9 for each agent
+
+Add per-agent credentials to `github.json`:
+
+```json
+{
+  "webhook_secret": "your-github-webhook-secret",
+  "apps": {
+    "galen": {
+      "id": "111111",
+      "private_key_path": "~/.brainiac/github-app-galen.pem",
+      "installations": {
+        "stowzilla": "11111111",
+        "ardavis": "22222222"
+      }
+    },
+    "glados": {
+      "id": "333333",
+      "private_key_path": "~/.brainiac/github-app-glados.pem",
+      "installations": {
+        "stowzilla": "33333333",
+        "ardavis": "44444444"
+      }
+    }
+  },
+  "repos": {}
+}
+```
+
+The `installations` hash maps GitHub account/org names to their installation IDs.
+When the plugin makes an API call, it picks the correct installation based on the
+repo owner (e.g. `stowzilla/brainiac` uses the `stowzilla` installation).
+
+If you only have one installation, you can use the flat `installation_id` key instead:
+
+```json
+{
+  "apps": {
+    "galen": {
+      "id": "111111",
+      "private_key_path": "~/.brainiac/github-app-galen.pem",
+      "installation_id": "11111111"
+    }
+  }
+}
+```
+
+#### Single App (Simpler)
+
+If you only need one bot identity for all agents, use the `app` key (singular):
+
+```json
+{
+  "webhook_secret": "your-github-webhook-secret",
+  "app": {
+    "id": "123456",
+    "private_key_path": "~/.brainiac/github-app-private-key.pem",
+    "installation_id": "78901234"
+  },
+  "repos": {}
+}
+```
+
+#### Private Key Details
+
+The `.pem` file is generated by GitHub — you don't create it yourself. On your
+app's settings page (Settings → Developer settings → GitHub Apps → your app):
+
+1. Scroll to the **"Private keys"** section
+2. Click **"Generate a private key"**
+3. GitHub generates an RSA key pair, keeps the public half, and your browser
+   downloads the private half as a `.pem` file (named like
+   `your-app-name.2026-08-06.private-key.pem`)
+4. Move it to your brainiac config directory and lock down permissions:
+   ```bash
+   mv ~/Downloads/your-app-name.*.private-key.pem ~/.brainiac/github-app-galen.pem
+   chmod 600 ~/.brainiac/github-app-galen.pem
    ```
 
-If app credentials are not configured, the plugin falls back to using the `gh` CLI
+The plugin uses this key to sign JWTs for GitHub API authentication. Never
+commit `.pem` files to version control.
+
+#### Fallback
+
+If no app credentials are configured, the plugin falls back to using the `gh` CLI
 (which authenticates as your personal GitHub account).
 
 ### Environment Variables
 
-As an alternative to config file values, you can set:
+As an alternative to config file values, you can set (applies to single-app mode only):
 
 - `GITHUB_WEBHOOK_SECRET` — webhook signature secret
 - `GITHUB_APP_ID` — GitHub App ID
 - `GITHUB_APP_PRIVATE_KEY_PATH` — path to the `.pem` private key file
 - `GITHUB_APP_INSTALLATION_ID` — installation ID
+
+For per-agent apps, use the config file — env vars don't support multiple apps.
 
 ### GitHub Webhook Setup
 

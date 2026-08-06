@@ -1,5 +1,7 @@
 {
-  "webhook_secret": "your-github-webhook-secret",
+  "webhook_secret": "",
+  "allowed_owners": [],
+  "apps": {},
   "app": {
     "id": "",
     "private_key_path": "~/.brainiac/github-app-private-key.pem",

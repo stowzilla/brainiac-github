@@ -30,25 +30,74 @@ module Brainiac
             @config["webhook_secret"] || ENV.fetch("GITHUB_WEBHOOK_SECRET", nil)
           end
 
-          # GitHub App credentials — all three must be present for App auth to work.
+          # Per-agent app credentials from the "apps" hash.
+          # Falls back to the shared "app" config if no per-agent entry exists.
 
-          def app_id
-            @config.dig("app", "id")&.to_s || ENV.fetch("GITHUB_APP_ID", nil)
+          def app_id(agent_key = nil)
+            per_agent_value(agent_key, "id") ||
+              @config.dig("app", "id")&.to_s ||
+              ENV.fetch("GITHUB_APP_ID", nil)
           end
 
-          def private_key_path
-            path = @config.dig("app", "private_key_path") || ENV.fetch("GITHUB_APP_PRIVATE_KEY_PATH", nil)
+          def private_key_path(agent_key = nil)
+            path = per_agent_value(agent_key, "private_key_path") ||
+                   @config.dig("app", "private_key_path") ||
+                   ENV.fetch("GITHUB_APP_PRIVATE_KEY_PATH", nil)
             return nil unless path
 
             expanded = File.expand_path(path)
             File.exist?(expanded) ? expanded : nil
           end
 
-          def installation_id
-            @config.dig("app", "installation_id")&.to_s || ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
+          def installation_id(agent_key = nil, repo_owner: nil)
+            # Check per-agent config first
+            if agent_key
+              agent_conf = @config.dig("apps", agent_key)
+              if agent_conf
+                # Per-agent may have multiple installations keyed by owner
+                if repo_owner && agent_conf["installations"]
+                  return agent_conf.dig("installations", repo_owner)&.to_s || agent_conf["installation_id"]&.to_s
+                end
+
+                return agent_conf["installation_id"]&.to_s if agent_conf["installation_id"]
+              end
+            end
+
+            # Shared app config — check installations hash first, then flat installation_id
+            if repo_owner && @config.dig("app", "installations")
+              found = @config.dig("app", "installations", repo_owner)&.to_s
+              return found if found
+            end
+
+            @config.dig("app", "installation_id")&.to_s ||
+              ENV.fetch("GITHUB_APP_INSTALLATION_ID", nil)
+          end
+
+          # Returns the agent key that should be used for a given context.
+          # If per-agent apps are configured and the agent has an entry, returns that key.
+          # Otherwise returns nil (use shared app).
+          def agent_app_configured?(agent_key)
+            return false unless agent_key
+
+            !!@config.dig("apps", agent_key)
+          end
+
+          # Check if a repo owner is in the allowed_owners list.
+          # If allowed_owners is not configured (empty/missing), all owners are allowed.
+          def owner_allowed?(owner)
+            allowed = @config["allowed_owners"]
+            return true unless allowed.is_a?(Array) && !allowed.empty?
+
+            allowed.include?(owner)
           end
 
           private
+
+          def per_agent_value(agent_key, field)
+            return nil unless agent_key
+
+            @config.dig("apps", agent_key, field)&.to_s
+          end
 
           def load_config
             return {} unless File.exist?(CONFIG_FILE)
