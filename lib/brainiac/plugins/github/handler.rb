@@ -134,6 +134,7 @@ module Brainiac
             comment_body = comment["body"] || ""
             comment_id = comment["id"]
             comment_user = comment.dig("user", "login")
+            comment_user_type = comment.dig("user", "type")
             repo_name = payload.dig("repository", "full_name")
 
             unless issue["pull_request"]
@@ -149,9 +150,17 @@ module Brainiac
 
             project_key, project_config = project_result
             pr_number = issue["number"]
+            agent_name = agent_name_for(project_config)
 
-            if AppClient.configured?
-              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}")
+            # Ignore comments from this project's own bot to prevent self-triggering.
+            # Cross-agent bot comments (e.g. GLaDOS commenting on Galen's PR) are still processed.
+            if comment_user_type == "Bot" && own_bot_comment?(comment_user, agent_name)
+              LOG.info "Ignoring self-triggered bot comment from #{comment_user} (agent: #{agent_name})"
+              return [200, { status: "ignored", reason: "self-triggered bot comment" }.to_json]
+            end
+
+            if AppClient.configured?(agent_name)
+              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}", agent_key: agent_name)
               branch = pr_response.dig("head", "ref")
             else
               pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
@@ -254,6 +263,16 @@ module Brainiac
             card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
           end
 
+          # Check if a bot comment is from the same agent that would handle this PR.
+          # e.g. "galen-brainiac[bot]" is a self-trigger for agent "Galen",
+          # but "glados-brainiac[bot]" is a cross-agent request and should be processed.
+          def own_bot_comment?(bot_login, agent_name)
+            # Bot logins are like "galen-brainiac[bot]" — check if it starts with the agent name
+            normalized_login = bot_login.to_s.downcase.delete_suffix("[bot]")
+            normalized_agent = agent_name.to_s.downcase
+            normalized_login.start_with?(normalized_agent)
+          end
+
           # Extract PRs array from a work item, supporting both old flat format and new source-based format.
           def extract_prs(card_info)
             card_info.dig("sources", "github", "prs") || card_info["prs"] || []
@@ -331,7 +350,7 @@ module Brainiac
                                                                       project_key: project_key, comment_body: comment_body),
                                    agent_name: agent_name, channel: :github)
 
-            intent_ctx = fetch_pr_intent_context(pr_number, repo_name)
+            intent_ctx = fetch_pr_intent_context(pr_number, repo_name, agent_name)
             pid, log_file = run_agent(prompt, project_config: project_config, chdir: worktree,
                                               log_name: "pr-comment-#{pr_number}",
                                               model: detect_model(project_config, text: comment_body),
@@ -366,7 +385,7 @@ module Brainiac
             Brainiac.emit(:pr_review_received, card_number: card_number, reviewer: reviewer,
                                                agent_name: agent_name, project_config: project_config, repo_path: repo_path)
 
-            review_context = build_review_context(reviewer, review, pr_number, repo_name)
+            review_context = build_review_context(reviewer, review, pr_number, repo_name, agent_name)
             worktree = card_info["worktree"]
             work_dir = worktree && File.directory?(worktree) ? worktree : repo_path
 
@@ -385,17 +404,17 @@ module Brainiac
                                               source: :github,
                                               source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
                                               message: review["body"], channel: "GitHub PR review",
-                                              context: fetch_pr_intent_context(pr_number, repo_name))
+                                              context: fetch_pr_intent_context(pr_number, repo_name, agent_name))
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
           end
 
-          def build_review_context(reviewer, review, pr_number, repo_name)
+          def build_review_context(reviewer, review, pr_number, repo_name, agent_key = nil)
             context = "GitHub PR Review from @#{reviewer}:\n\n"
             context += "Review body:\n#{review["body"]}\n\n" if review["body"] && !review["body"].empty?
 
-            review_comments = fetch_pr_review_comments(pr_number, repo_name)
+            review_comments = fetch_pr_review_comments(pr_number, repo_name, agent_key)
             if review_comments.any?
               context += "Line-specific comments:\n"
               review_comments.each do |comment|
@@ -405,9 +424,9 @@ module Brainiac
             context
           end
 
-          def fetch_pr_review_comments(pr_number, repo)
-            if AppClient.configured?
-              response = AppClient.get("/repos/#{repo}/pulls/#{pr_number}/comments")
+          def fetch_pr_review_comments(pr_number, repo, agent_key = nil)
+            if AppClient.configured?(agent_key)
+              response = AppClient.get("/repos/#{repo}/pulls/#{pr_number}/comments", agent_key: agent_key)
               # Response is an array of comment objects
               response.map { |c| { "path" => c["path"], "line" => c["line"], "body" => c["body"], "user" => c.dig("user", "login") } }
             else
@@ -447,9 +466,9 @@ module Brainiac
 
           # Lightweight recent PR comment context for intent classification.
           # Returns "author: message" format (last 5 issue comments on the PR).
-          def fetch_pr_intent_context(pr_number, repo_name)
-            if AppClient.configured?
-              comments = AppClient.get("/repos/#{repo_name}/issues/#{pr_number}/comments")
+          def fetch_pr_intent_context(pr_number, repo_name, agent_key = nil)
+            if AppClient.configured?(agent_key)
+              comments = AppClient.get("/repos/#{repo_name}/issues/#{pr_number}/comments", agent_key: agent_key)
               entries = comments.last(5).map { |c| "#{c.dig("user", "login")}: #{c["body"]&.slice(0, 200)}" }
               return nil if entries.empty?
 
