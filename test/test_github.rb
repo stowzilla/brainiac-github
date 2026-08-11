@@ -124,4 +124,40 @@ class TestMentionDetection < Minitest::Test
     assert_equal "Sherlock", detect_mentioned_agent("@Sherlock what do you think?")
     assert_nil detect_mentioned_agent("This looks good, no mentions here")
   end
+
+  def test_github_mention_slash_name
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "/robin review this")
+    assert_equal "Robin", result
+  end
+
+  def test_github_mention_slash_ask
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "/ask Sherlock what do you think?")
+    assert_equal "Sherlock", result
+  end
+
+  def test_github_mention_vocative_comma
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "Robin, review this please")
+    assert_equal "Robin", result
+  end
+
+  def test_github_mention_at_sign_brainiac
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "@robin-brainiac review this")
+    assert_equal "Robin", result
+  end
+
+  def test_github_mention_no_match
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "This is a regular comment")
+    assert_nil result
+  end
+
+  def test_github_mention_plain_at_name_does_not_match
+    # Plain @Name should NOT match (would tag real GitHub users)
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "@Robin review this")
+    assert_nil result
+  end
+
+  def test_github_mention_case_insensitive
+    result = Brainiac::Plugins::Github::Handler.send(:detect_github_mention, "/ROBIN fix this")
+    assert_equal "Robin", result
+  end
 end
