@@ -174,39 +174,12 @@ module Brainiac
               return [200, { status: "ignored", reason: "self-triggered bot comment" }.to_json]
             end
 
-            if AppClient.configured?(agent_name)
-              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}", agent_key: agent_name)
-              branch = pr_response.dig("head", "ref")
-            else
-              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
-                                chdir: project_config["repo_path"])
-              branch = JSON.parse(pr_data)["branch"]
-            end
-
+            branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
             result = find_work_item_by_branch(branch)
 
-            if result
-              _, card_info = result
-              card_number = extract_card_number(card_info)
-              worktree = card_info["worktree"]
+            card_number, worktree = resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
+            return worktree if worktree.is_a?(Array)
 
-              # For cross-agent mentions, the mentioned agent reviews from the repo
-              # (not the worktree) — it's a read-only review, not implementation.
-              # For the assigned agent, require an active worktree.
-              is_mention = mentioned && mentioned.downcase == agent_name.downcase
-              if is_mention
-                worktree = worktree && File.directory?(worktree) ? worktree : project_config["repo_path"]
-              else
-                unless worktree && File.directory?(worktree)
-                  LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
-                  return [200, { status: "ignored", reason: "no active worktree" }.to_json]
-                end
-              end
-
-            else
-              card_number = nil
-              worktree = project_config["repo_path"]
-            end
             card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}-#{agent_name.downcase}"
 
             if session_active?(card_key)
@@ -287,11 +260,11 @@ module Brainiac
           def github_agent_env(agent_name, repo_name)
             # Try agent's own app first, fall back to shared "brainiac" app
             effective_agent = if AppClient.configured?(agent_name)
-                               agent_name
-                             elsif AppClient.configured?("brainiac")
-                               LOG.info "[GitHub] Agent #{agent_name} has no app configured, falling back to shared brainiac app"
-                               "brainiac"
-                             end
+                                agent_name
+                              elsif AppClient.configured?("brainiac")
+                                LOG.info "[GitHub] Agent #{agent_name} has no app configured, falling back to shared brainiac app"
+                                "brainiac"
+                              end
             return {} unless effective_agent
 
             repo_owner = repo_name.split("/").first
@@ -308,6 +281,41 @@ module Brainiac
           # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
           def extract_card_number(card_info)
             card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
+          end
+
+          # Fetch the head branch name of a PR using the GitHub App or `gh` CLI.
+          def fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
+            if AppClient.configured?(agent_name)
+              pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}", agent_key: agent_name)
+              pr_response.dig("head", "ref")
+            else
+              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
+                                chdir: project_config["repo_path"])
+              JSON.parse(pr_data)["branch"]
+            end
+          end
+
+          # Resolve the card number and worktree for a PR comment.
+          # Returns [card_number, worktree_path] on success, or a Rack response array
+          # (to be returned early) when the comment should be ignored.
+          def resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
+            return [nil, project_config["repo_path"]] unless result
+
+            _, card_info = result
+            card_number = extract_card_number(card_info)
+            worktree = card_info["worktree"]
+
+            is_mention = mentioned && mentioned.downcase == agent_name.downcase
+            if is_mention
+              worktree = project_config["repo_path"] unless worktree && File.directory?(worktree)
+            else
+              unless worktree && File.directory?(worktree)
+                LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
+                return [200, { status: "ignored", reason: "no active worktree" }.to_json]
+              end
+            end
+
+            [card_number, worktree]
           end
 
           # Detect an agent mention in a GitHub PR comment using syntax that
@@ -333,10 +341,10 @@ module Brainiac
               return name if downcased.match?(/\A#{Regexp.escape(name_lower)}\s*,/)
 
               # Pattern: "/ask Name ..."
-              return name if downcased.match?(/\A\/ask\s+#{Regexp.escape(name_lower)}\b/)
+              return name if downcased.match?(%r{\A/ask\s+#{Regexp.escape(name_lower)}\b})
 
               # Pattern: "/Name ..."
-              return name if downcased.match?(/\A\/#{Regexp.escape(name_lower)}\b/)
+              return name if downcased.match?(%r{\A/#{Regexp.escape(name_lower)}\b})
 
               # Pattern: "@Name-brainiac ..." (matches the bot account naming convention)
               return name if downcased.match?(/@#{Regexp.escape(name_lower)}-brainiac\b/)
