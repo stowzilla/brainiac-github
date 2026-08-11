@@ -97,6 +97,16 @@ def reload_projects! = nil
 def reload_agent_registry!(**) = nil
 def send_notification(_type, _msg, **) = nil
 
+def detect_mentioned_agent(text)
+  AGENT_REGISTRY.each do |key, entry|
+    name = entry.is_a?(Hash) ? (entry["display_name"] || key.capitalize) : key.capitalize
+    return name if text.downcase.include?("@#{name.downcase}")
+  end
+  nil
+end
+
+def local_agent_names = Set.new(%w[Sherlock Robin])
+
 # Write github.json for tests
 github_config = { "webhook_secret" => "test-secret-123", "repos" => {} }
 File.write(File.join(TEST_BRAINIAC_DIR, "github.json"), JSON.generate(github_config))

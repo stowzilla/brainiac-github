@@ -82,3 +82,46 @@ class TestGithubPlugin < Minitest::Test
     assert_includes body, "not merged into main"
   end
 end
+
+class TestMentionDetection < Minitest::Test
+  def test_configured_rejects_empty_string_app_id
+    # Set up config with empty app ID
+    config_path = File.join(TEST_BRAINIAC_DIR, "github.json")
+    config = {
+      "webhook_secret" => "test-secret-123",
+      "apps" => {
+        "avon" => { "id" => "", "private_key_path" => "/tmp/fake.pem", "installations" => { "stowzilla" => "12345" } }
+      }
+    }
+    File.write(config_path, JSON.generate(config))
+    Brainiac::Plugins::Github::Config.load!
+
+    refute Brainiac::Plugins::Github::AppClient.configured?("avon")
+  ensure
+    File.write(config_path, JSON.generate({ "webhook_secret" => "test-secret-123", "repos" => {} }))
+    Brainiac::Plugins::Github::Config.load!
+  end
+
+  def test_configured_rejects_empty_installation_id
+    config_path = File.join(TEST_BRAINIAC_DIR, "github.json")
+    config = {
+      "webhook_secret" => "test-secret-123",
+      "apps" => {
+        "avon" => { "id" => "12345", "private_key_path" => "/tmp/fake.pem", "installations" => { "stowzilla" => "" } }
+      }
+    }
+    File.write(config_path, JSON.generate(config))
+    Brainiac::Plugins::Github::Config.load!
+
+    refute Brainiac::Plugins::Github::AppClient.configured?("avon")
+  ensure
+    File.write(config_path, JSON.generate({ "webhook_secret" => "test-secret-123", "repos" => {} }))
+    Brainiac::Plugins::Github::Config.load!
+  end
+
+  def test_mention_detection_in_comment_body
+    assert_equal "Robin", detect_mentioned_agent("@Robin please review this PR")
+    assert_equal "Sherlock", detect_mentioned_agent("@Sherlock what do you think?")
+    assert_nil detect_mentioned_agent("This looks good, no mentions here")
+  end
+end
