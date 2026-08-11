@@ -152,12 +152,18 @@ module Brainiac
             pr_number = issue["number"]
             agent_name = agent_name_for(project_config)
 
-            # Mention detection: if the comment @mentions a specific agent, dispatch
+            # Mention detection: if the comment mentions a specific agent, dispatch
             # that agent instead of the project's default. This enables cross-agent
-            # reviews on PRs (e.g., "@Threepio review this").
-            mentioned = detect_mentioned_agent(comment_body)
+            # reviews on PRs.
+            #
+            # Supported syntax (to avoid tagging real GitHub users with @):
+            #   "Threepio, review this"   — name + comma at the start
+            #   "/ask Threepio review"    — /ask Name
+            #   "/Threepio review this"   — /Name
+            #   "@Threepio review this"   — @Name (legacy, works but tags real users)
+            mentioned = detect_github_mention(comment_body)
             if mentioned && mentioned.downcase != agent_name.downcase && local_agent_names.include?(mentioned)
-              LOG.info "[GitHub] Mention detected: @#{mentioned} in PR comment (default agent: #{agent_name})"
+              LOG.info "[GitHub] Mention detected: #{mentioned} in PR comment (default agent: #{agent_name})"
               agent_name = mentioned
             end
 
@@ -302,6 +308,41 @@ module Brainiac
           # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
           def extract_card_number(card_info)
             card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
+          end
+
+          # Detect an agent mention in a GitHub PR comment using syntax that
+          # avoids tagging real GitHub users.
+          #
+          # Supported patterns (case-insensitive):
+          #   "Threepio, review this"        — agent name + comma at the start of text
+          #   "/ask Threepio review"         — /ask followed by agent name
+          #   "/Threepio review this"        — slash followed by agent name
+          #   "@threepio-brainiac review"    — @name-brainiac (matches bot username pattern)
+          #
+          # Returns the display name of the matched agent, or nil.
+          def detect_github_mention(text)
+            return nil if text.nil? || text.strip.empty?
+
+            downcased = text.strip.downcase
+            agent_names = all_agent_names
+
+            agent_names.each do |name|
+              name_lower = name.downcase
+
+              # Pattern: "Name, ..." at the start (vocative)
+              return name if downcased.match?(/\A#{Regexp.escape(name_lower)}\s*,/)
+
+              # Pattern: "/ask Name ..."
+              return name if downcased.match?(/\A\/ask\s+#{Regexp.escape(name_lower)}\b/)
+
+              # Pattern: "/Name ..."
+              return name if downcased.match?(/\A\/#{Regexp.escape(name_lower)}\b/)
+
+              # Pattern: "@Name-brainiac ..." (matches the bot account naming convention)
+              return name if downcased.match?(/@#{Regexp.escape(name_lower)}-brainiac\b/)
+            end
+
+            nil
           end
 
           # Check if a bot comment is from the same agent that would handle this PR.

@@ -105,6 +105,10 @@ def detect_mentioned_agent(text)
   nil
 end
 
+def all_agent_names
+  AGENT_REGISTRY.map { |key, entry| entry.is_a?(Hash) ? (entry["display_name"] || key.capitalize) : key.capitalize }
+end
+
 def local_agent_names = Set.new(%w[Sherlock Robin])
 
 # Write github.json for tests
