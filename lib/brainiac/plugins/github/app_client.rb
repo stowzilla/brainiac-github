@@ -30,8 +30,13 @@ module Brainiac
         class << self
           # Returns true if GitHub App credentials are fully configured.
           # Checks per-agent first, then shared app config.
+          # Guards against empty-string values (common in template configs).
           def configured?(agent_key = nil)
-            !!(Config.app_id(agent_key) && Config.private_key_path(agent_key) && Config.installation_id(agent_key))
+            id = Config.app_id(agent_key)
+            key_path = Config.private_key_path(agent_key)
+            inst_id = Config.installation_id(agent_key)
+
+            !!(id && !id.empty? && key_path && inst_id && !inst_id.empty?)
           end
 
           # POST a comment on an issue or PR.

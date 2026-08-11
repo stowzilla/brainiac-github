@@ -152,6 +152,15 @@ module Brainiac
             pr_number = issue["number"]
             agent_name = agent_name_for(project_config)
 
+            # Mention detection: if the comment @mentions a specific agent, dispatch
+            # that agent instead of the project's default. This enables cross-agent
+            # reviews on PRs (e.g., "@Threepio review this").
+            mentioned = detect_mentioned_agent(comment_body)
+            if mentioned && mentioned.downcase != agent_name.downcase && local_agent_names.include?(mentioned)
+              LOG.info "[GitHub] Mention detected: @#{mentioned} in PR comment (default agent: #{agent_name})"
+              agent_name = mentioned
+            end
+
             # Ignore comments from this project's own bot to prevent self-triggering.
             # Cross-agent bot comments (e.g. GLaDOS commenting on Galen's PR) are still processed.
             if comment_user_type == "Bot" && own_bot_comment?(comment_user, agent_name)
@@ -175,16 +184,24 @@ module Brainiac
               card_number = extract_card_number(card_info)
               worktree = card_info["worktree"]
 
-              unless worktree && File.directory?(worktree)
-                LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
-                return [200, { status: "ignored", reason: "no active worktree" }.to_json]
+              # For cross-agent mentions, the mentioned agent reviews from the repo
+              # (not the worktree) — it's a read-only review, not implementation.
+              # For the assigned agent, require an active worktree.
+              is_mention = mentioned && mentioned.downcase == agent_name.downcase
+              if is_mention
+                worktree = worktree && File.directory?(worktree) ? worktree : project_config["repo_path"]
+              else
+                unless worktree && File.directory?(worktree)
+                  LOG.info "No active worktree for PR ##{pr_number}, ignoring comment"
+                  return [200, { status: "ignored", reason: "no active worktree" }.to_json]
+                end
               end
 
             else
               card_number = nil
               worktree = project_config["repo_path"]
             end
-            card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}"
+            card_key = "pr-comment-#{repo_name.tr("/", "-")}-#{pr_number}-#{agent_name.downcase}"
 
             if session_active?(card_key)
               LOG.info "Skipping PR comment on #{card_key} — agent session already active"
@@ -194,7 +211,7 @@ module Brainiac
             card_context = card_number ? " for card ##{card_number}" : ""
             LOG.info "PR comment from #{comment_user} on PR ##{pr_number}#{card_context} (project: #{project_key})"
             dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
-                                repo_name, worktree, project_key, project_config)
+                                repo_name, worktree, project_key, project_config, agent_name: agent_name)
 
             [200, { status: "processed", card: card_number, pr: pr_number, comment_id: comment_id, project: project_key }.to_json]
           rescue StandardError => e
@@ -259,12 +276,20 @@ module Brainiac
 
           # Generate a GH_TOKEN env var for the agent process so `gh` CLI
           # authenticates as the app bot instead of the user's personal account.
-          # Returns empty hash if app credentials aren't configured for this agent.
+          # Falls back to the shared "brainiac" app if the agent's own app isn't configured.
+          # Returns empty hash if no app credentials are available at all.
           def github_agent_env(agent_name, repo_name)
-            return {} unless AppClient.configured?(agent_name)
+            # Try agent's own app first, fall back to shared "brainiac" app
+            effective_agent = if AppClient.configured?(agent_name)
+                               agent_name
+                             elsif AppClient.configured?("brainiac")
+                               LOG.info "[GitHub] Agent #{agent_name} has no app configured, falling back to shared brainiac app"
+                               "brainiac"
+                             end
+            return {} unless effective_agent
 
             repo_owner = repo_name.split("/").first
-            token = AppClient.installation_token_for(agent_name, repo_owner: repo_owner)
+            token = AppClient.installation_token_for(effective_agent, repo_owner: repo_owner)
             return {} unless token
 
             { "GH_TOKEN" => token }
@@ -343,8 +368,8 @@ module Brainiac
           end
 
           def dispatch_pr_comment(card_number, card_key, pr_number, comment_id, comment_user, comment_body,
-                                  repo_name, worktree, project_key, project_config)
-            agent_name = agent_name_for(project_config)
+                                  repo_name, worktree, project_key, project_config, agent_name: nil)
+            agent_name ||= agent_name_for(project_config)
 
             Thread.new do
               if AppClient.configured?(agent_name)
