@@ -161,3 +161,32 @@ class TestMentionDetection < Minitest::Test
     assert_equal "Robin", result
   end
 end
+
+class TestResolveWorkItemAgent < Minitest::Test
+  def test_returns_work_item_agent_when_local
+    card_info = { "agent" => "Robin" }
+    project_config = { "agent_name" => "Sherlock" }
+    result = Brainiac::Plugins::Github::Handler.send(:resolve_work_item_agent, card_info, project_config)
+    assert_equal "Robin", result
+  end
+
+  def test_falls_back_to_project_default_when_no_agent
+    card_info = { "branch" => "feature-x" }
+    project_config = { "agent_name" => "Sherlock" }
+    result = Brainiac::Plugins::Github::Handler.send(:resolve_work_item_agent, card_info, project_config)
+    assert_equal "Sherlock", result
+  end
+
+  def test_falls_back_when_agent_not_local
+    card_info = { "agent" => "UnknownAgent" }
+    project_config = { "agent_name" => "Sherlock" }
+    result = Brainiac::Plugins::Github::Handler.send(:resolve_work_item_agent, card_info, project_config)
+    assert_equal "Sherlock", result
+  end
+
+  def test_falls_back_when_card_info_nil
+    project_config = { "agent_name" => "Sherlock" }
+    result = Brainiac::Plugins::Github::Handler.send(:resolve_work_item_agent, nil, project_config)
+    assert_equal "Sherlock", result
+  end
+end
