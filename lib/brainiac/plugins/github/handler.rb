@@ -177,6 +177,20 @@ module Brainiac
             branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
             result = find_work_item_by_branch(branch)
 
+            # If a work item exists and has an assigned agent, use that agent
+            # instead of the project default. This ensures comments on a PR
+            # route to whoever is actually working it (e.g. GLaDOS opened the PR,
+            # so GLaDOS should handle follow-up comments — not the project's default agent).
+            # Explicit mentions still take priority (already resolved above).
+            if result && !mentioned
+              _, card_info = result
+              work_item_agent = card_info["agent"]
+              if work_item_agent && work_item_agent.downcase != agent_name.downcase && local_agent_names.include?(work_item_agent)
+                LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
+                agent_name = work_item_agent
+              end
+            end
+
             card_number, worktree = resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
             return worktree if worktree.is_a?(Array)
 
@@ -281,6 +295,18 @@ module Brainiac
           # the old flat format ("number") and new source-based format ("sources.fizzy.card_number").
           def extract_card_number(card_info)
             card_info["number"] || card_info.dig("sources", "fizzy", "card_number")
+          end
+
+          # Resolve the agent name from a work item, falling back to the project default.
+          # Work items track which agent is assigned (e.g. GLaDOS opened the PR), so
+          # comments/reviews should route to that agent rather than the project default.
+          def resolve_work_item_agent(card_info, project_config)
+            work_item_agent = card_info["agent"] if card_info
+            if work_item_agent && local_agent_names.include?(work_item_agent)
+              work_item_agent
+            else
+              agent_name_for(project_config)
+            end
           end
 
           # Fetch the head branch name of a PR using the GitHub App or `gh` CLI.
@@ -460,7 +486,7 @@ module Brainiac
           def dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
                                  repo_name, project_key, project_config, repo_path)
             review_id = review["id"]
-            agent_name = agent_name_for(project_config)
+            agent_name = resolve_work_item_agent(card_info, project_config)
 
             Thread.new do
               if AppClient.configured?(agent_name)
