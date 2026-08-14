@@ -190,3 +190,30 @@ class TestResolveWorkItemAgent < Minitest::Test
     assert_equal "Sherlock", result
   end
 end
+
+class TestDetectAgentFromBotUser < Minitest::Test
+  def test_detects_agent_from_bot_login
+    result = Brainiac::Plugins::Github::Handler.send(:detect_agent_from_bot_user, "sherlock-brainiac[bot]")
+    assert_equal "Sherlock", result
+  end
+
+  def test_detects_agent_without_bot_suffix
+    result = Brainiac::Plugins::Github::Handler.send(:detect_agent_from_bot_user, "robin-brainiac")
+    assert_equal "Robin", result
+  end
+
+  def test_returns_nil_for_unknown_agent
+    result = Brainiac::Plugins::Github::Handler.send(:detect_agent_from_bot_user, "unknown-brainiac[bot]")
+    assert_nil result
+  end
+
+  def test_returns_nil_for_regular_user
+    result = Brainiac::Plugins::Github::Handler.send(:detect_agent_from_bot_user, "ardavis")
+    assert_nil result
+  end
+
+  def test_returns_nil_for_nil_input
+    result = Brainiac::Plugins::Github::Handler.send(:detect_agent_from_bot_user, nil)
+    assert_nil result
+  end
+end

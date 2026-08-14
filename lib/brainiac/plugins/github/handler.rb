@@ -174,22 +174,12 @@ module Brainiac
               return [200, { status: "ignored", reason: "self-triggered bot comment" }.to_json]
             end
 
-            branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
+            pr_data = fetch_pr_data(repo_name, pr_number, agent_name, project_config)
+            branch = pr_data["branch"]
             result = find_work_item_by_branch(branch)
 
-            # If a work item exists and has an assigned agent, use that agent
-            # instead of the project default. This ensures comments on a PR
-            # route to whoever is actually working it (e.g. GLaDOS opened the PR,
-            # so GLaDOS should handle follow-up comments — not the project's default agent).
-            # Explicit mentions still take priority (already resolved above).
-            if result && !mentioned
-              _, card_info = result
-              work_item_agent = card_info["agent"]
-              if work_item_agent && work_item_agent.downcase != agent_name.downcase && local_agent_names.include?(work_item_agent)
-                LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
-                agent_name = work_item_agent
-              end
-            end
+            # Override agent based on work item or bot PR opener (mentions take priority above).
+            agent_name = resolve_pr_agent(result, pr_data, agent_name) unless mentioned
 
             card_number, worktree = resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
             return worktree if worktree.is_a?(Array)
@@ -309,16 +299,59 @@ module Brainiac
             end
           end
 
+          # Resolve the agent for a PR comment/review based on available signals.
+          # Priority:
+          #   1. Work item's assigned agent (most authoritative)
+          #   2. Bot PR opener (if the PR was opened by a GitHub App bot)
+          #   3. Falls through to the current agent_name (project default)
+          def resolve_pr_agent(work_item_result, pr_data, current_agent)
+            if work_item_result
+              _, card_info = work_item_result
+              work_item_agent = card_info["agent"]
+              if work_item_agent && work_item_agent.downcase != current_agent.downcase && local_agent_names.include?(work_item_agent)
+                LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{current_agent})"
+                return work_item_agent
+              end
+            elsif pr_data["user_type"] == "Bot"
+              bot_agent = detect_agent_from_bot_user(pr_data["user_login"])
+              if bot_agent && bot_agent.downcase != current_agent.downcase && local_agent_names.include?(bot_agent)
+                LOG.info "[GitHub] Bot PR opener override: #{bot_agent} (project default: #{current_agent})"
+                return bot_agent
+              end
+            end
+
+            current_agent
+          end
+
           # Fetch the head branch name of a PR using the GitHub App or `gh` CLI.
-          def fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
+          # Also returns the PR user login and type for bot detection.
+          def fetch_pr_data(repo_name, pr_number, agent_name, project_config)
             if AppClient.configured?(agent_name)
               pr_response = AppClient.get("/repos/#{repo_name}/pulls/#{pr_number}", agent_key: agent_name)
-              pr_response.dig("head", "ref")
+              {
+                "branch" => pr_response.dig("head", "ref"),
+                "user_login" => pr_response.dig("user", "login"),
+                "user_type" => pr_response.dig("user", "type")
+              }
             else
-              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}", "--jq", "{branch: .head.ref}",
+              pr_data = run_cmd("gh", "api", "/repos/#{repo_name}/pulls/#{pr_number}",
+                                "--jq", "{branch: .head.ref, user_login: .user.login, user_type: .user.type}",
                                 chdir: project_config["repo_path"])
-              JSON.parse(pr_data)["branch"]
+              JSON.parse(pr_data)
             end
+          end
+
+          # Detect the agent from a bot PR opener (e.g. "galen-brainiac[bot]" → "Galen").
+          # Returns the display name if found and local, nil otherwise.
+          def detect_agent_from_bot_user(bot_login)
+            return nil unless bot_login.to_s.end_with?("[bot]") || bot_login.to_s.include?("-brainiac")
+
+            # Strip "[bot]" suffix and "-brainiac" suffix to get agent key
+            normalized = bot_login.to_s.downcase.delete_suffix("[bot]").delete_suffix("-brainiac").strip
+            return nil if normalized.empty?
+
+            # Match against known agent names (case-insensitive)
+            all_agent_names.find { |name| name.downcase == normalized }
           end
 
           # Resolve the card number and worktree for a PR comment.
@@ -422,9 +455,27 @@ module Brainiac
             branch = pr.dig("head", "ref")
             pr_number = pr["number"]
             pr_url = pr["html_url"]
+            repo_name = payload.dig("repository", "full_name")
 
             result = find_work_item_by_branch(branch)
             unless result
+              # If the PR was opened by a bot, create a work item so future
+              # comments/reviews route to the correct agent.
+              pr_user_login = pr.dig("user", "login")
+              pr_user_type = pr.dig("user", "type")
+              if pr_user_type == "Bot"
+                bot_agent = detect_agent_from_bot_user(pr_user_login)
+                if bot_agent
+                  project_result = identify_project_by_repo(repo_name)
+                  if project_result
+                    project_key, = project_result
+                    register_work_item(branch: branch, project: project_key, agent: bot_agent,
+                                       source: "github", source_data: { "prs" => [{ "number" => pr_number, "url" => pr_url }] })
+                    LOG.info "[PR Track] Created work item for bot-opened PR ##{pr_number} (agent: #{bot_agent}, branch: #{branch})"
+                    return
+                  end
+                end
+              end
               LOG.info "[PR Track] No card found for branch #{branch}"
               return
             end
