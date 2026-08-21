@@ -111,10 +111,6 @@ module Brainiac
             review_state = review["state"]
             reviewer = review.dig("user", "login")
 
-            unless %w[changes_requested commented].include?(review_state)
-              return [200, { status: "ignored", reason: "review state: #{review_state}" }.to_json]
-            end
-
             project_result = identify_project_by_repo(repo_name)
             return [200, { status: "ignored", reason: "no matching project" }.to_json] unless project_result
 
@@ -134,6 +130,24 @@ module Brainiac
               card_info = {}
               card_number = nil
             end
+
+            # Always emit the hook so gate tracking works for approvals too
+            Brainiac.emit(:pr_review_received,
+                          card_number: card_number,
+                          reviewer: reviewer,
+                          review_state: review_state,
+                          pr_number: pr_number,
+                          repo_name: repo_name,
+                          project_config: project_config,
+                          repo_path: repo_path)
+
+            # Only dispatch the implementation agent for changes_requested or commented reviews
+            # Approvals don't need the agent to do anything (the gate hook handles the flow)
+            unless %w[changes_requested commented].include?(review_state)
+              LOG.info "PR review (#{review_state}) by #{reviewer} on PR ##{pr_number} — hook emitted, no agent dispatch"
+              return [200, { status: "processed", card: card_number, pr: pr_number, reviewer: reviewer, action: "hook_only" }.to_json]
+            end
+
             card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
