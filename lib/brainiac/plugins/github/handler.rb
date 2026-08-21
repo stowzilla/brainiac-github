@@ -52,6 +52,27 @@ module Brainiac
 
           def handle_pr_opened(payload)
             track_pr_in_work_items(payload)
+
+            # Emit :pr_opened hook so plugins (e.g., brainiac-basecamp) can trigger review gates.
+            pr = payload["pull_request"]
+            branch = pr.dig("head", "ref")
+
+            result = find_work_item_by_branch(branch)
+            if result
+              _internal_id, card_info = result
+              card_number = extract_card_number(card_info)
+              pr_number = pr["number"]
+              repo_name = payload.dig("repository", "full_name")
+              repo_path = card_info["worktree"] || find_repo_path_for(payload)
+              base_branch = pr.dig("base", "ref")
+
+              Brainiac.emit(:pr_opened,
+                            card_number: card_number, card_info: card_info,
+                            pr_number: pr_number, repo_name: repo_name,
+                            repo_path: repo_path, branch: branch,
+                            base_branch: base_branch, pull_request: pr)
+            end
+
             [200, { status: "processed", action: "pr_tracked" }.to_json]
           end
 
