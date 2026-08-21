@@ -14,6 +14,20 @@ module Brainiac
             repo_full_name = payload.dig("repository", "full_name")
 
             default_branch = payload.dig("repository", "default_branch") || "main"
+
+            # Emit a hook for ALL merges (including epic branches) so consumers can decide
+            # Extract card number early for the hook
+            card_number = extract_card_number(branch)
+            if card_number
+              Brainiac.emit(:pr_merged_to_branch,
+                            card_number: card_number,
+                            branch: branch,
+                            base_branch: base,
+                            pr_url: pr_url,
+                            pr_title: pr_title,
+                            repo_full_name: repo_full_name)
+            end
+
             unless base == default_branch
               LOG.info "PR merged into #{base}, not #{default_branch} — ignoring"
               return [200, { status: "ignored", reason: "not merged into #{default_branch}" }.to_json]
