@@ -163,6 +163,15 @@ module Brainiac
               return [200, { status: "processed", card: card_number, pr: pr_number, reviewer: reviewer, action: "hook_only" }.to_json]
             end
 
+            # Determine which agent should handle this review.
+            # If the work item agent isn't local, abort — another machine handles it.
+            # Also check PR author as fallback when no work item exists.
+            agent_name = resolve_dispatch_agent(card_info, pr, project_config)
+            unless agent_name
+              LOG.info "[GitHub] Responsible agent not local, skipping PR review on PR ##{pr_number}"
+              return [200, { status: "ignored", reason: "responsible agent not local" }.to_json]
+            end
+
             card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
@@ -170,7 +179,7 @@ module Brainiac
             card_context = card_number ? " for card ##{card_number}" : ""
             LOG.info "PR review submitted by #{reviewer} on PR ##{pr_number}#{card_context} (project: #{project_key})"
             dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
-                               repo_name, project_key, project_config, repo_path)
+                               repo_name, project_key, project_config, repo_path, agent_name: agent_name)
 
             [200, { status: "processed", card: card_number, pr: pr_number, reviewer: reviewer, project: project_key }.to_json]
           rescue StandardError => e
@@ -227,18 +236,15 @@ module Brainiac
             branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
             result = find_work_item_by_branch(branch)
 
-            # If a work item exists and has an assigned agent, use that agent
-            # instead of the project default. This ensures comments on a PR
-            # route to whoever is actually working it (e.g. GLaDOS opened the PR,
-            # so GLaDOS should handle follow-up comments — not the project's default agent).
-            # Explicit mentions still take priority (already resolved above).
-            if result && !mentioned
-              _, card_info = result
-              work_item_agent = card_info["agent"]
-              if work_item_agent && work_item_agent.downcase != agent_name.downcase && local_agent_names.include?(work_item_agent)
-                LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
-                agent_name = work_item_agent
-              end
+            # Determine which agent should handle this PR comment.
+            # Priority: explicit mention > work item agent > PR author > project default.
+            # Crucially, if the resolved agent isn't local, ABORT — don't fall back to
+            # a different agent. Another machine with the correct agent will handle it.
+            unless mentioned
+              resolved = resolve_comment_agent(result, issue, agent_name, pr_number)
+              return resolved[:response] if resolved[:response]
+
+              agent_name = resolved[:agent_name] if resolved[:agent_name]
             end
 
             card_number, worktree = resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
@@ -357,6 +363,118 @@ module Brainiac
             else
               agent_name_for(project_config)
             end
+          end
+
+          # Resolve which agent should handle a PR comment based on work item and PR author.
+          # Returns a hash with either :agent_name (override) or :response (abort early).
+          # If neither key is present, the caller should keep the current agent_name.
+          #
+          # @param result [Array, nil] Work item lookup result [internal_id, card_info]
+          # @param issue [Hash] Issue/PR payload
+          # @param _default_agent [String] Current default agent name (unused, kept for API clarity)
+          # @param pr_number [Integer] PR number (for logging)
+          # @return [Hash] { agent_name: "Name" } or { response: [status, body] } or {}
+          def resolve_comment_agent(result, issue, _default_agent, pr_number)
+            if result
+              _, card_info = result
+              work_item_agent = card_info["agent"]
+              return resolve_local_agent_or_abort(work_item_agent, "Work item", pr_number) if work_item_agent
+            end
+
+            # No work item agent — try PR author
+            pr_author_agent = resolve_pr_author_agent(issue)
+            return resolve_local_agent_or_abort(pr_author_agent, "PR author", pr_number) if pr_author_agent
+
+            # No strong signal — keep the default
+            {}
+          end
+
+          # Check if an agent is local. Returns { agent_name: } if local, { response: } if not.
+          def resolve_local_agent_or_abort(agent_name, source, pr_number)
+            if local_agent_names.include?(agent_name)
+              LOG.info "[GitHub] #{source} agent override: #{agent_name}"
+              { agent_name: agent_name }
+            else
+              LOG.info "[GitHub] #{source} agent #{agent_name} not local, skipping PR ##{pr_number}"
+              { response: [200, { status: "ignored", reason: "#{source.downcase} agent not local" }.to_json] }
+            end
+          end
+
+          # Resolve which agent should handle a PR event, returning nil if this machine
+          # should not dispatch. Checks work item agent, then PR author, then project default.
+          # Returns nil (abort) if the responsible agent isn't local — prevents double-dispatch
+          # across machines.
+          #
+          # @param card_info [Hash, nil] Work item info (may be empty hash or nil)
+          # @param pull_request [Hash] Pull request payload (from webhook or issue.pull_request)
+          # @param project_config [Hash] Project configuration
+          # @return [String, nil] Agent name to dispatch, or nil to abort
+          def resolve_dispatch_agent(card_info, pull_request, project_config)
+            # Priority 1: work item agent
+            work_item_agent = card_info["agent"] if card_info && !card_info.empty?
+            if work_item_agent
+              return local_agent_names.include?(work_item_agent) ? work_item_agent : nil
+            end
+
+            # Priority 2: PR author (if it's an agent bot)
+            pr_author_agent = resolve_pr_author_agent_from_pr(pull_request)
+            if pr_author_agent
+              return local_agent_names.include?(pr_author_agent) ? pr_author_agent : nil
+            end
+
+            # Priority 3: project default (only if no stronger signal exists)
+            agent_name_for(project_config)
+          end
+
+          # Resolve agent name from a PR author login (issue payload).
+          # Matches bot logins like "galen-brainiac[bot]" to agent names.
+          #
+          # @param issue [Hash] Issue/PR payload (has "user" field with "login" and "type")
+          # @return [String, nil] Agent display name or nil if not a bot agent
+          def resolve_pr_author_agent(issue)
+            return nil unless issue
+
+            author_login = issue.dig("user", "login")
+            author_type = issue.dig("user", "type")
+            return nil unless author_login
+
+            # Only match bot accounts (agent PRs are opened by app bots)
+            return nil unless author_type == "Bot"
+
+            match_bot_login_to_agent(author_login)
+          end
+
+          # Resolve agent name from a pull_request payload's author.
+          #
+          # @param pull_request [Hash] Pull request payload
+          # @return [String, nil] Agent display name or nil if not a bot agent
+          def resolve_pr_author_agent_from_pr(pull_request)
+            return nil unless pull_request
+
+            author_login = pull_request.dig("user", "login")
+            author_type = pull_request.dig("user", "type")
+            return nil unless author_login
+
+            # Only match bot accounts (agent PRs are opened by app bots)
+            return nil unless author_type == "Bot"
+
+            match_bot_login_to_agent(author_login)
+          end
+
+          # Match a bot login (e.g. "galen-brainiac[bot]") to an agent display name.
+          #
+          # @param bot_login [String] GitHub bot login
+          # @return [String, nil] Agent display name or nil
+          def match_bot_login_to_agent(bot_login)
+            normalized = bot_login.to_s.downcase.delete_suffix("[bot]").strip
+
+            all_agent_names.each do |name|
+              agent_lower = name.downcase
+              return name if normalized == agent_lower
+              return name if normalized == "#{agent_lower}-brainiac"
+            end
+
+            nil
           end
 
           # Fetch the head branch name of a PR using the GitHub App or `gh` CLI.
@@ -534,9 +652,9 @@ module Brainiac
           end
 
           def dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
-                                 repo_name, project_key, project_config, repo_path)
+                                 repo_name, project_key, project_config, repo_path, agent_name: nil)
             review_id = review["id"]
-            agent_name = resolve_work_item_agent(card_info, project_config)
+            agent_name ||= resolve_work_item_agent(card_info, project_config)
 
             Thread.new do
               if AppClient.configured?(agent_name)
