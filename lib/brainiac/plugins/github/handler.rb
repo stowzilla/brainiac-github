@@ -126,6 +126,16 @@ module Brainiac
             repo_name = payload.dig("repository", "full_name")
             review_state = review["state"]
             reviewer = review.dig("user", "login")
+            reviewer_type = review.dig("user", "type")
+
+            # If the review was submitted by a remote agent bot, ignore — the other machine handles it.
+            if reviewer_type == "Bot"
+              reviewing_agent = agent_name_from_bot_login(reviewer)
+              if reviewing_agent && !local_agent_names.include?(reviewing_agent)
+                LOG.info "[GitHub] Ignoring review from remote agent bot #{reviewer} (agent: #{reviewing_agent}) on PR ##{pr_number}"
+                return [200, { status: "ignored", reason: "remote agent bot review" }.to_json]
+              end
+            end
 
             # If the PR was opened by a remote agent bot (not local to this machine),
             # skip dispatch — the other machine that owns the agent will handle it.
@@ -236,12 +246,12 @@ module Brainiac
               agent_name = mentioned
             end
 
-            # Ignore comments from this project's own bot to prevent self-triggering.
-            # Cross-agent bot comments (e.g. GLaDOS commenting on Galen's PR) are still processed.
-            if comment_user_type == "Bot" && own_bot_comment?(comment_user, agent_name)
-              LOG.info "Ignoring self-triggered bot comment from #{comment_user} (agent: #{agent_name})"
-              return [200, { status: "ignored", reason: "self-triggered bot comment" }.to_json]
-            end
+            # Ignore comments from agent bots that shouldn't trigger dispatch on this machine:
+            # 1. Self-triggered: bot matches the dispatching agent (prevents loops)
+            # 2. Remote agent: bot matches a known agent that isn't local (other machine handles it)
+            # Cross-agent LOCAL bot comments (e.g. GLaDOS commenting on Galen's PR) are still processed.
+            bot_ignore_reason = bot_comment_ignore_reason(comment_user, comment_user_type, agent_name, pr_number)
+            return bot_ignore_reason if bot_ignore_reason
 
             branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
             result = find_work_item_by_branch(branch)
@@ -489,6 +499,30 @@ module Brainiac
 
               # Pattern: "@Name-brainiac ..." (matches the bot account naming convention)
               return name if downcased.match?(/@#{Regexp.escape(name_lower)}-brainiac\b/)
+            end
+
+            nil
+          end
+
+          # Determine if a bot comment should be ignored by this machine.
+          # Returns a Rack response array if the comment should be ignored, or nil if it should be processed.
+          #
+          # Ignores:
+          # 1. Self-triggered: bot matches the dispatching agent (prevents loops)
+          # 2. Remote agent: bot matches a known agent that isn't local (other machine handles it)
+          # Allows: cross-agent LOCAL bot comments (e.g. GLaDOS commenting on Galen's PR)
+          def bot_comment_ignore_reason(comment_user, comment_user_type, agent_name, pr_number)
+            return nil unless comment_user_type == "Bot"
+
+            if own_bot_comment?(comment_user, agent_name)
+              LOG.info "Ignoring self-triggered bot comment from #{comment_user} (agent: #{agent_name})"
+              return [200, { status: "ignored", reason: "self-triggered bot comment" }.to_json]
+            end
+
+            commenting_agent = agent_name_from_bot_login(comment_user)
+            if commenting_agent && !local_agent_names.include?(commenting_agent)
+              LOG.info "[GitHub] Ignoring comment from remote agent bot #{comment_user} (agent: #{commenting_agent}) on PR ##{pr_number}"
+              return [200, { status: "ignored", reason: "remote agent bot comment" }.to_json]
             end
 
             nil
