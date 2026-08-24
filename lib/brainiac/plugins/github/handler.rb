@@ -16,7 +16,8 @@ module Brainiac
             default_branch = payload.dig("repository", "default_branch") || "main"
 
             # Extract card number from branch name (e.g., "fizzy-1182-add-goodbye-method" → 1182)
-            card_number_from_branch = branch&.match(/^fizzy-(\d+)-/)&.[](1)&.to_i
+            card_number_from_branch = branch&.match(/^fizzy-(\d+)-/)
+            card_number_from_branch = card_number_from_branch[1].to_i if card_number_from_branch
 
             # Emit a hook for ALL merges (including epic branches) so consumers can decide
             if card_number_from_branch
@@ -126,6 +127,14 @@ module Brainiac
             review_state = review["state"]
             reviewer = review.dig("user", "login")
 
+            # If the PR was opened by a remote agent bot (not local to this machine),
+            # skip dispatch — the other machine that owns the agent will handle it.
+            unless pr_owned_locally?(pr)
+              pr_author = pr.dig("user", "login")
+              LOG.info "[GitHub] PR ##{pr_number} owned by remote agent (#{pr_author}) — skipping dispatch"
+              return [200, { status: "ignored", reason: "PR owned by remote agent" }.to_json]
+            end
+
             project_result = identify_project_by_repo(repo_name)
             return [200, { status: "ignored", reason: "no matching project" }.to_json] unless project_result
 
@@ -190,6 +199,16 @@ module Brainiac
             unless issue["pull_request"]
               LOG.info "Issue comment on non-PR issue ##{issue["number"]}, ignoring"
               return [200, { status: "ignored", reason: "not a PR comment" }.to_json]
+            end
+
+            # If the PR was opened by a remote agent bot (not local to this machine),
+            # skip dispatch — the other machine that owns the agent will handle it.
+            pr_author = issue.dig("user", "login")
+            pr_author_type = issue.dig("user", "type")
+            unless pr_author_owned_locally?(pr_author, pr_author_type)
+              pr_number = issue["number"]
+              LOG.info "[GitHub] PR ##{pr_number} owned by remote agent (#{pr_author}) — skipping dispatch"
+              return [200, { status: "ignored", reason: "PR owned by remote agent" }.to_json]
             end
 
             project_result = identify_project_by_repo(repo_name)
@@ -314,6 +333,52 @@ module Brainiac
 
               return [internal_id, info]
             end
+            nil
+          end
+
+          # Determine if this machine should handle a PR based on who opened it.
+          # If the PR was opened by a bot that maps to a known agent, only the
+          # machine where that agent is local should dispatch. Human-opened PRs
+          # are always considered local (handled by normal routing logic).
+          #
+          # This prevents both machines from dispatching when they share the same
+          # GitHub webhook — e.g. Adam's Kaylee opens a PR, only Adam's machine handles it.
+          def pr_owned_locally?(pull_request)
+            pr_author = pull_request.dig("user", "login")
+            pr_author_type = pull_request.dig("user", "type")
+            pr_author_owned_locally?(pr_author, pr_author_type)
+          end
+
+          # Check PR ownership given the author login and account type.
+          # Used by both pull_request_review (has full PR object) and issue_comment
+          # (has issue.user which is the PR author on PR-linked issues).
+          def pr_author_owned_locally?(pr_author, pr_author_type)
+            # Human-opened PRs are always handled (normal routing applies)
+            return true unless pr_author_type == "Bot"
+
+            # Extract agent name from bot login (e.g. "kaylee-brainiac[bot]" → "Kaylee")
+            agent_from_bot = agent_name_from_bot_login(pr_author)
+            return true unless agent_from_bot
+
+            # If the bot's agent is local to this machine, we own it
+            local_agent_names.include?(agent_from_bot)
+          end
+
+          # Extract a Brainiac agent display name from a GitHub bot login.
+          # Bot logins follow the pattern "<name>-brainiac[bot]" or "<name>-brainiac".
+          # Returns the matched agent display name, or nil if not a known agent bot.
+          def agent_name_from_bot_login(bot_login)
+            return nil unless bot_login
+
+            # Normalize: remove [bot] suffix, lowercase
+            normalized = bot_login.to_s.downcase.delete_suffix("[bot]").strip
+
+            # Match against known agents — bot logins are "<agent>-brainiac"
+            all_agent_names.each do |name|
+              return name if normalized == "#{name.downcase}-brainiac"
+              return name if normalized == name.downcase
+            end
+
             nil
           end
 

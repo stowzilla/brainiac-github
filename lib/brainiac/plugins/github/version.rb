@@ -3,7 +3,7 @@
 module Brainiac
   module Plugins
     module Github
-      VERSION = "0.2.3"
+      VERSION = "0.2.4"
     end
   end
 end
