@@ -182,6 +182,18 @@ module Brainiac
               return [200, { status: "processed", card: card_number, pr: pr_number, reviewer: reviewer, action: "hook_only" }.to_json]
             end
 
+            # If the work item's assigned agent is NOT local to this machine,
+            # skip dispatch — the other machine owns this PR's agent.
+            # This check is intentionally AFTER the hook emit so gate tracking
+            # works on both machines, but only one machine dispatches the agent.
+            if result
+              work_item_agent = card_info["agent"]
+              if work_item_agent && !local_agent_names.include?(work_item_agent)
+                LOG.info "[GitHub] PR ##{pr_number} assigned to remote agent #{work_item_agent} — skipping review dispatch"
+                return [200, { status: "ignored", reason: "work item owned by remote agent" }.to_json]
+              end
+            end
+
             card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
 
             return [200, { status: "ignored", reason: "session already active" }.to_json] if session_active?(card_key)
@@ -261,12 +273,22 @@ module Brainiac
             # route to whoever is actually working it (e.g. GLaDOS opened the PR,
             # so GLaDOS should handle follow-up comments — not the project's default agent).
             # Explicit mentions still take priority (already resolved above).
+            #
+            # If the work item's assigned agent is NOT local to this machine,
+            # skip dispatch entirely — the other machine owns this PR's agent.
             if result && !mentioned
               _, card_info = result
               work_item_agent = card_info["agent"]
-              if work_item_agent && work_item_agent.downcase != agent_name.downcase && local_agent_names.include?(work_item_agent)
-                LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
-                agent_name = work_item_agent
+              if work_item_agent
+                if local_agent_names.include?(work_item_agent)
+                  if work_item_agent.downcase != agent_name.downcase
+                    LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
+                    agent_name = work_item_agent
+                  end
+                else
+                  LOG.info "[GitHub] PR ##{pr_number} assigned to remote agent #{work_item_agent} — skipping dispatch"
+                  return [200, { status: "ignored", reason: "work item owned by remote agent" }.to_json]
+                end
               end
             end
 
