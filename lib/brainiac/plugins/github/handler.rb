@@ -16,7 +16,8 @@ module Brainiac
             default_branch = payload.dig("repository", "default_branch") || "main"
 
             # Extract card number from branch name (e.g., "fizzy-1182-add-goodbye-method" → 1182)
-            card_number_from_branch = branch&.match(/^fizzy-(\d+)-/)&.[](1)&.to_i
+            card_number_from_branch = branch&.match(/^fizzy-(\d+)-/)
+            card_number_from_branch = card_number_from_branch[1].to_i if card_number_from_branch
 
             # Emit a hook for ALL merges (including epic branches) so consumers can decide
             if card_number_from_branch
