@@ -192,6 +192,14 @@ module Brainiac
                 LOG.info "[GitHub] PR ##{pr_number} assigned to remote agent #{work_item_agent} — skipping review dispatch"
                 return [200, { status: "ignored", reason: "work item owned by remote agent" }.to_json]
               end
+            else
+              # No work item found — check if the PR's branch exists as a local worktree.
+              # This handles PRs opened manually (not through a card) where the worktree
+              # exists on only one machine. The machine that has the worktree should handle it.
+              unless branch_exists_locally?(repo_path, branch)
+                LOG.info "[GitHub] PR ##{pr_number} branch '#{branch}' not found locally — skipping review dispatch"
+                return [200, { status: "ignored", reason: "branch not on this machine" }.to_json]
+              end
             end
 
             card_key = "pr-review-#{repo_name.tr("/", "-")}-#{pr_number}"
@@ -394,6 +402,32 @@ module Brainiac
 
             # If the bot's agent is local to this machine, we own it
             local_agent_names.include?(agent_from_bot)
+          end
+
+          # Check if a branch exists as a local worktree or local branch.
+          # Used to determine if this machine should handle a PR when there's no work item.
+          #
+          # @param repo_path [String] Path to the main repo
+          # @param branch [String] Branch name to check
+          # @return [Boolean] True if the branch exists locally
+          def branch_exists_locally?(repo_path, branch)
+            return false unless repo_path && File.directory?(repo_path)
+
+            # Check if branch exists in any local worktree
+            output, status = Open3.capture2("git", "worktree", "list", "--porcelain", chdir: repo_path)
+            return false unless status.success?
+
+            output.each_line do |line|
+              if line.start_with?("branch refs/heads/")
+                wt_branch = line.sub("branch refs/heads/", "").strip
+                return true if wt_branch == branch
+              end
+            end
+
+            # Also check if it's a local branch (not in a separate worktree)
+            _, status = Open3.capture2("git", "rev-parse", "--verify", "refs/heads/#{branch}",
+                                       chdir: repo_path, err: File::NULL)
+            status.success?
           end
 
           # Extract a Brainiac agent display name from a GitHub bot login.
