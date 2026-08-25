@@ -285,19 +285,10 @@ module Brainiac
             # If the work item's assigned agent is NOT local to this machine,
             # skip dispatch entirely — the other machine owns this PR's agent.
             if result && !mentioned
-              _, card_info = result
-              work_item_agent = card_info["agent"]
-              if work_item_agent
-                if local_agent_names.include?(work_item_agent)
-                  if work_item_agent.downcase != agent_name.downcase
-                    LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{agent_name})"
-                    agent_name = work_item_agent
-                  end
-                else
-                  LOG.info "[GitHub] PR ##{pr_number} assigned to remote agent #{work_item_agent} — skipping dispatch"
-                  return [200, { status: "ignored", reason: "work item owned by remote agent" }.to_json]
-                end
-              end
+              override_result = resolve_comment_agent_override(result, agent_name, pr_number)
+              return override_result if override_result.is_a?(Array)
+
+              agent_name = override_result if override_result
             end
 
             # Fallback for human-opened PRs with no assigned agent: if there's no work item,
@@ -305,14 +296,11 @@ module Brainiac
             # has its own local project default agent. Use branch_exists_locally? as a
             # tiebreaker — only the machine that has the branch as a local worktree/branch
             # should handle the comment. Explicit mentions bypass this check.
-            unless mentioned
-              has_agent = result && result[1]["agent"] && !result[1]["agent"].empty?
-              unless has_agent
-                repo_path = project_config["repo_path"]
-                unless branch_exists_locally?(repo_path, branch)
-                  LOG.info "[GitHub] PR ##{pr_number} branch '#{branch}' not found locally — skipping comment dispatch"
-                  return [200, { status: "ignored", reason: "branch not on this machine" }.to_json]
-                end
+            unless mentioned || work_item_has_agent?(result)
+              repo_path = project_config["repo_path"]
+              unless branch_exists_locally?(repo_path, branch)
+                LOG.info "[GitHub] PR ##{pr_number} branch '#{branch}' not found locally — skipping comment dispatch"
+                return [200, { status: "ignored", reason: "branch not on this machine" }.to_json]
               end
             end
 
@@ -418,6 +406,38 @@ module Brainiac
 
             # If the bot's agent is local to this machine, we own it
             local_agent_names.include?(agent_from_bot)
+          end
+
+          # Check if a work item result has an assigned agent.
+          # Returns true if the result exists and has a non-empty agent field.
+          def work_item_has_agent?(result)
+            return false unless result
+
+            agent = result[1]["agent"]
+            agent && !agent.empty?
+          end
+
+          # Resolve agent override from a work item for PR comment dispatch.
+          # Returns:
+          #   - A Rack response array if dispatch should be skipped (remote agent owns it)
+          #   - An agent name string if the work item agent should override the default
+          #   - nil if no override needed
+          def resolve_comment_agent_override(result, current_agent, pr_number)
+            _, card_info = result
+            work_item_agent = card_info["agent"]
+            return nil unless work_item_agent
+
+            unless local_agent_names.include?(work_item_agent)
+              LOG.info "[GitHub] PR ##{pr_number} assigned to remote agent #{work_item_agent} — skipping dispatch"
+              return [200, { status: "ignored", reason: "work item owned by remote agent" }.to_json]
+            end
+
+            if work_item_agent.downcase != current_agent.downcase
+              LOG.info "[GitHub] Work item agent override: #{work_item_agent} (project default: #{current_agent})"
+              return work_item_agent
+            end
+
+            nil
           end
 
           # Check if a branch exists as a local worktree or local branch.
