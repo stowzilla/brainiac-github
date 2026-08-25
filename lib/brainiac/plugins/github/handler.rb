@@ -300,6 +300,22 @@ module Brainiac
               end
             end
 
+            # Fallback for human-opened PRs with no assigned agent: if there's no work item,
+            # or the work item has no agent field, both machines would dispatch because each
+            # has its own local project default agent. Use branch_exists_locally? as a
+            # tiebreaker — only the machine that has the branch as a local worktree/branch
+            # should handle the comment. Explicit mentions bypass this check.
+            unless mentioned
+              has_agent = result && result[1]["agent"] && !result[1]["agent"].empty?
+              unless has_agent
+                repo_path = project_config["repo_path"]
+                unless branch_exists_locally?(repo_path, branch)
+                  LOG.info "[GitHub] PR ##{pr_number} branch '#{branch}' not found locally — skipping comment dispatch"
+                  return [200, { status: "ignored", reason: "branch not on this machine" }.to_json]
+                end
+              end
+            end
+
             card_number, worktree = resolve_comment_worktree(result, mentioned, agent_name, pr_number, project_config)
             return worktree if worktree.is_a?(Array)
 
