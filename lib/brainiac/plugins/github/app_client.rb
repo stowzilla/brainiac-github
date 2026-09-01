@@ -61,15 +61,19 @@ module Brainiac
             post("/repos/#{repo}/issues/comments/#{comment_id}/reactions", { content: reaction }, agent_key: agent_key)
           end
 
-          # POST a reaction on a PR review.
+          # POST a reaction on a PR (or issue) itself.
+          #
+          # GitHub's reactions API has NO endpoint for PR reviews — only for
+          # issue comments, PR review comments, issues, and PRs. Since a PR is
+          # an issue under the hood, PR reactions go through the issues path.
           #
           # @param repo [String] "owner/repo"
-          # @param review_id [Integer]
-          # @param reaction [String]
+          # @param pr_number [Integer]
+          # @param reaction [String] e.g. "eyes", "+1", "rocket"
           # @param agent_key [String, nil] agent key for per-agent app identity
           # @return [Hash] parsed response
-          def create_review_reaction(repo, review_id, reaction, agent_key: nil)
-            post("/repos/#{repo}/pulls/reviews/#{review_id}/reactions", { content: reaction }, agent_key: agent_key)
+          def create_pr_reaction(repo, pr_number, reaction, agent_key: nil)
+            post("/repos/#{repo}/issues/#{pr_number}/reactions", { content: reaction }, agent_key: agent_key)
           end
 
           # GET request to GitHub API.

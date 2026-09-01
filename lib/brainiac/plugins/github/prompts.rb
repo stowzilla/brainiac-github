@@ -14,6 +14,19 @@ module Brainiac
           - ``` ```language ``` for code blocks
           - `- item` for lists
 
+          ### @Mentions (STRICT — read carefully)
+          On GitHub, an `@name` only works if it maps to a real GitHub account.
+          The other agents (Galen, GLaDOS, Threepio, etc.) are NOT GitHub users —
+          `@threepio` just pings some unrelated stranger who happens to own that
+          username. That's noisy and rude.
+
+          Rules for GitHub comments:
+          - The ONLY people you may @mention are **@ardavis** (Andy) and **@fladamd** (Adam).
+          - NEVER @mention any other agent or person. Refer to other agents by
+            plain name instead — write `Threepio` or `GLaDOS`, not `@threepio`.
+          - If you're unsure whether a name is a real GitHub account, don't @mention it.
+            Drop the `@` and use the plain name.
+
           ### Scope
           You are responding to activity on a GitHub PR. Focus on the code changes and review feedback.
           When posting comments, post on the PR unless specifically asked to update the card.
