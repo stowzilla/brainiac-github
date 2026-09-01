@@ -730,10 +730,12 @@ module Brainiac
             agent_name = resolve_work_item_agent(card_info, project_config)
 
             Thread.new do
+              # GitHub has no reactions endpoint for PR reviews, so react on the
+              # PR itself (PRs are issues under the hood) to signal "on it".
               if AppClient.configured?(agent_name)
-                AppClient.create_review_reaction(repo_name, review_id, "eyes", agent_key: agent_name)
+                AppClient.create_pr_reaction(repo_name, pr_number, "eyes", agent_key: agent_name)
               else
-                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/pulls/reviews/#{review_id}/reactions",
+                run_cmd("gh", "api", "-X", "POST", "/repos/#{repo_name}/issues/#{pr_number}/reactions",
                         "-f", "content=eyes", "-H", "Accept: application/vnd.github+json", chdir: repo_path)
               end
 
