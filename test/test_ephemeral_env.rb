@@ -27,6 +27,7 @@ module BeltEnvironment
       @destroy_calls = []
       @belt_app = true
       @configured_envs = []
+      @frontend_only_args = nil
     end
 
     def belt_app?(_path) = @belt_app != false
@@ -38,7 +39,14 @@ module BeltEnvironment
         Array(@configured_envs).include?(env_name)
     end
 
-    def frontend_only_changes?(**) = false
+    def frontend_only_changes?(**kwargs)
+      @frontend_only_args = kwargs
+      false
+    end
+
+    def frontend_only_args
+      @frontend_only_args
+    end
 
     def deploy(worktree:, env_name:, frontend_only: false)
       @deploy_calls << { worktree: worktree, env_name: env_name, frontend_only: frontend_only }
@@ -117,6 +125,14 @@ class TestEphemeralBeltEnvLifecycle < Minitest::Test
     refute BeltEnvironment.deployed
   end
 
+  def test_redeploy_passes_pr_base_branch
+    FileUtils.mkdir_p(File.join(@worktree, "infrastructure", "fizzy-1299"))
+
+    redeploy(1299, base_branch: "master")
+
+    assert_equal "master", BeltEnvironment.frontend_only_args[:base_branch]
+  end
+
   def test_destroy_when_env_in_worktree
     FileUtils.mkdir_p(File.join(@worktree, "infrastructure", "fizzy-1299"))
 
@@ -134,10 +150,11 @@ class TestEphemeralBeltEnvLifecycle < Minitest::Test
 
   private
 
-  def redeploy(card_number)
+  def redeploy(card_number, base_branch: nil)
     Brainiac::Plugins::Github::Handler.send(
       :maybe_redeploy_ephemeral_belt_env,
-      card_info: { "worktree" => @worktree }, card_number: card_number, worktree: @worktree
+      card_info: { "worktree" => @worktree }, card_number: card_number, worktree: @worktree,
+      base_branch: base_branch
     )
   end
 

@@ -110,7 +110,8 @@ module Brainiac
 
             # Try to redeploy to ephemeral Belt environment if one exists
             ephemeral_redeployed = maybe_redeploy_ephemeral_belt_env(
-              card_info: card_info, card_number: card_number, worktree: worktree
+              card_info: card_info, card_number: card_number, worktree: worktree,
+              base_branch: pr.dig("base", "ref")
             )
 
             # Also emit the hook for other plugins (e.g., brainiac-fizzy persistent env redeploy)
@@ -909,7 +910,7 @@ module Brainiac
 
           # Redeploy to ephemeral Belt environment on PR sync (new commits pushed).
           # Only redeploys if an ephemeral env already exists for this card.
-          def maybe_redeploy_ephemeral_belt_env(card_info:, card_number:, worktree:)
+          def maybe_redeploy_ephemeral_belt_env(card_info:, card_number:, worktree:, base_branch: nil)
             return false unless defined?(BeltConfig) && defined?(BeltEnvironment)
             return false unless belt_app_worktree?(worktree)
 
@@ -922,7 +923,7 @@ module Brainiac
 
             LOG.info "[EphemeralEnv] Redeploying to ephemeral environment '#{env_name}' (PR sync)"
 
-            frontend_only = BeltEnvironment.frontend_only_changes?(worktree: worktree)
+            frontend_only = BeltEnvironment.frontend_only_changes?(worktree: worktree, base_branch: base_branch)
             BeltEnvironment.deploy(worktree: worktree, env_name: env_name, frontend_only: frontend_only)
             true
           rescue StandardError => e
