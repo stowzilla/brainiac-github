@@ -883,21 +883,19 @@ module Brainiac
           # Destroy ephemeral Belt environment on PR merge.
           # Must be called BEFORE worktree cleanup since infrastructure lives in the worktree.
           def maybe_destroy_ephemeral_belt_env(card_info:, card_number:, project_key:)
-            # Check if Belt utilities are available
             unless defined?(BeltConfig) && defined?(BeltEnvironment)
               LOG.debug "[EphemeralEnv] Belt utilities not available — skipping env destruction"
               return
             end
 
             env_name = BeltConfig.ephemeral_env_for_card(card_number)
+            worktree = card_info&.dig("worktree")
 
-            # Check if this card has an ephemeral environment
-            unless BeltConfig.ephemeral_env?(env_name)
+            unless ephemeral_env_present?(worktree: worktree, env_name: env_name)
               LOG.debug "[EphemeralEnv] No ephemeral env '#{env_name}' found for card ##{card_number}"
               return
             end
 
-            worktree = card_info&.dig("worktree")
             unless worktree && File.directory?(worktree)
               LOG.warn "[EphemeralEnv] Cannot destroy '#{env_name}' — worktree not found"
               return
@@ -912,33 +910,39 @@ module Brainiac
           # Redeploy to ephemeral Belt environment on PR sync (new commits pushed).
           # Only redeploys if an ephemeral env already exists for this card.
           def maybe_redeploy_ephemeral_belt_env(card_info:, card_number:, worktree:)
-            # Check if Belt utilities are available
-            unless defined?(BeltConfig) && defined?(BeltEnvironment) && defined?(BeltHelpers)
-              return false
-            end
-
-            # Check if this is a Belt app
-            unless belt_app?(worktree)
-              return false
-            end
+            return false unless defined?(BeltConfig) && defined?(BeltEnvironment)
+            return false unless belt_app_worktree?(worktree)
 
             env_name = BeltConfig.ephemeral_env_for_card(card_number)
 
-            # Only redeploy if ephemeral env exists
-            unless BeltConfig.ephemeral_env?(env_name)
+            unless ephemeral_env_present?(worktree: worktree, env_name: env_name)
               LOG.debug "[EphemeralEnv] No ephemeral env '#{env_name}' for card ##{card_number} — skipping redeploy"
               return false
             end
 
             LOG.info "[EphemeralEnv] Redeploying to ephemeral environment '#{env_name}' (PR sync)"
 
-            # Check if changes are frontend-only for faster deploy
             frontend_only = BeltEnvironment.frontend_only_changes?(worktree: worktree)
             BeltEnvironment.deploy(worktree: worktree, env_name: env_name, frontend_only: frontend_only)
             true
           rescue StandardError => e
             LOG.error "[EphemeralEnv] Error redeploying ephemeral env: #{e.message}"
             false
+          end
+
+          # belt_app? lives on BeltEnvironment (via BeltHelpers), not on this Handler module.
+          def belt_app_worktree?(worktree)
+            BeltEnvironment.respond_to?(:belt_app?) && BeltEnvironment.belt_app?(worktree)
+          end
+
+          # Worktree infrastructure/<env>/ is the source of truth; tracking JSON is a fallback.
+          def ephemeral_env_present?(worktree:, env_name:)
+            if BeltEnvironment.respond_to?(:environment_configured?) &&
+               BeltEnvironment.environment_configured?(worktree: worktree, env_name: env_name)
+              return true
+            end
+
+            BeltConfig.ephemeral_env?(env_name)
           end
         end
       end
