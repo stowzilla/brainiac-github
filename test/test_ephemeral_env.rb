@@ -44,9 +44,7 @@ module BeltEnvironment
       false
     end
 
-    def frontend_only_args
-      @frontend_only_args
-    end
+    attr_reader :frontend_only_args
 
     def deploy(worktree:, env_name:, frontend_only: false)
       @deploy_calls << { worktree: worktree, env_name: env_name, frontend_only: frontend_only }
