@@ -36,9 +36,7 @@ module Brainiac
               # Trigger #2: a child PR merging *into* an epic branch redeploys the
               # epic's ephemeral env (if one is tracked for that branch).
               epic_redeployed = maybe_redeploy_epic_ephemeral_env(base_branch: base)
-              if epic_redeployed
-                return [200, { status: "processed", action: "epic_redeploy", base: base }.to_json]
-              end
+              return [200, { status: "processed", action: "epic_redeploy", base: base }.to_json] if epic_redeployed
 
               return [200, { status: "ignored", reason: "not merged into #{default_branch}" }.to_json]
             end
@@ -111,9 +109,8 @@ module Brainiac
 
             result = find_work_item_by_branch(branch)
             unless result
-              if epic_redeployed
-                return [200, { status: "processed", action: "epic_sync", branch: branch, epic_redeployed: true }.to_json]
-              end
+              return [200, { status: "processed", action: "epic_sync", branch: branch, epic_redeployed: true }.to_json] if epic_redeployed
+
               return [200, { status: "ignored", reason: "no matching card" }.to_json]
             end
 
@@ -137,7 +134,9 @@ module Brainiac
                                                       worktree: worktree, pull_request: pr, branch: branch)
 
             if ephemeral_redeployed || epic_redeployed || results.any?
-              [200, { status: "processed", action: "pr_sync", card: card_number, ephemeral_redeployed: ephemeral_redeployed, epic_redeployed: epic_redeployed }.to_json]
+              [200,
+               { status: "processed", action: "pr_sync", card: card_number, ephemeral_redeployed: ephemeral_redeployed,
+                 epic_redeployed: epic_redeployed }.to_json]
             else
               [200, { status: "ignored", reason: "no deployment plugin" }.to_json]
             end
@@ -996,6 +995,7 @@ module Brainiac
             LOG.error "[EphemeralEnv] Error redeploying epic env: #{e.message}"
             false
           end
+
           def belt_app_worktree?(worktree)
             BeltEnvironment.respond_to?(:belt_app?) && BeltEnvironment.belt_app?(worktree)
           end
