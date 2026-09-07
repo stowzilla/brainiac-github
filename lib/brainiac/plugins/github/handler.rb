@@ -32,6 +32,14 @@ module Brainiac
 
             unless base == default_branch
               LOG.info "PR merged into #{base}, not #{default_branch} — ignoring"
+
+              # Trigger #2: a child PR merging *into* an epic branch redeploys the
+              # epic's ephemeral env (if one is tracked for that branch).
+              epic_redeployed = maybe_redeploy_epic_ephemeral_env(base_branch: base)
+              if epic_redeployed
+                return [200, { status: "processed", action: "epic_redeploy", base: base }.to_json]
+              end
+
               return [200, { status: "ignored", reason: "not merged into #{default_branch}" }.to_json]
             end
 
@@ -95,9 +103,19 @@ module Brainiac
           def handle_pr_synchronized(payload)
             pr = payload["pull_request"]
             branch = pr.dig("head", "ref")
+            base_branch = pr.dig("base", "ref")
+
+            # Trigger #1: a push to an epic PR's head branch redeploys the epic env.
+            # Epic envs have no card, so resolve this before the card lookup bails.
+            epic_redeployed = maybe_redeploy_epic_ephemeral_env(branch: branch)
 
             result = find_work_item_by_branch(branch)
-            return [200, { status: "ignored", reason: "no matching card" }.to_json] unless result
+            unless result
+              if epic_redeployed
+                return [200, { status: "processed", action: "epic_sync", branch: branch, epic_redeployed: true }.to_json]
+              end
+              return [200, { status: "ignored", reason: "no matching card" }.to_json]
+            end
 
             _internal_id, card_info = result
             card_number = extract_card_number(card_info)
@@ -111,15 +129,15 @@ module Brainiac
             # Try to redeploy to ephemeral Belt environment if one exists
             ephemeral_redeployed = maybe_redeploy_ephemeral_belt_env(
               card_info: card_info, card_number: card_number, worktree: worktree,
-              base_branch: pr.dig("base", "ref")
+              base_branch: base_branch
             )
 
             # Also emit the hook for other plugins (e.g., brainiac-fizzy persistent env redeploy)
             results = Brainiac.emit(:pr_synchronized, card_number: card_number, card_info: card_info,
                                                       worktree: worktree, pull_request: pr, branch: branch)
 
-            if ephemeral_redeployed || results.any?
-              [200, { status: "processed", action: "pr_sync", card: card_number, ephemeral_redeployed: ephemeral_redeployed }.to_json]
+            if ephemeral_redeployed || epic_redeployed || results.any?
+              [200, { status: "processed", action: "pr_sync", card: card_number, ephemeral_redeployed: ephemeral_redeployed, epic_redeployed: epic_redeployed }.to_json]
             else
               [200, { status: "ignored", reason: "no deployment plugin" }.to_json]
             end
@@ -931,7 +949,53 @@ module Brainiac
             false
           end
 
-          # belt_app? lives on BeltEnvironment (via BeltHelpers), not on this Handler module.
+          # Redeploy an epic's ephemeral Belt environment.
+          #
+          # Epic envs aren't keyed by card number — they're tracked in
+          # ephemeral_envs.json with `epic_branch` / `epic_pr` fields. This
+          # resolves the env by matching the head branch (PR sync / push) or the
+          # PR url (child merge into the epic branch), then redeploys its worktree.
+          #
+          # @param branch [String, nil] Head branch of the synced PR
+          # @param base_branch [String, nil] Base branch (for merge-triggered redeploys)
+          # @return [Boolean] true if a redeploy was attempted
+          def maybe_redeploy_epic_ephemeral_env(branch: nil, base_branch: nil)
+            return false unless defined?(BeltConfig) && defined?(BeltEnvironment)
+
+            # Trigger #1: a push/synchronize on the epic PR branch itself.
+            # Trigger #2: a child PR merging *into* the epic branch (base match).
+            match = BeltConfig.epic_env_for_branch(branch) ||
+                    BeltConfig.epic_env_for_branch(base_branch)
+            return false unless match
+
+            env_name, entry = match
+            worktree = entry["worktree"]
+
+            unless worktree && File.directory?(worktree)
+              LOG.warn "[EphemeralEnv] Epic env '#{env_name}' worktree missing: #{worktree.inspect} — skipping redeploy"
+              return false
+            end
+            return false unless belt_app_worktree?(worktree)
+
+            unless ephemeral_env_present?(worktree: worktree, env_name: env_name)
+              LOG.debug "[EphemeralEnv] Epic env '#{env_name}' not configured in worktree — skipping redeploy"
+              return false
+            end
+
+            # Pull latest into the epic worktree so the deploy reflects the new commits.
+            system("git", "pull", "--ff-only", chdir: worktree)
+
+            LOG.info "[EphemeralEnv] Redeploying epic environment '#{env_name}' (branch: #{branch || base_branch})"
+
+            # No reliable per-push base for an epic worktree, so let the diff base
+            # fall back to origin/HEAD → origin/main → origin/master.
+            frontend_only = BeltEnvironment.frontend_only_changes?(worktree: worktree)
+            BeltEnvironment.deploy(worktree: worktree, env_name: env_name, frontend_only: frontend_only)
+            true
+          rescue StandardError => e
+            LOG.error "[EphemeralEnv] Error redeploying epic env: #{e.message}"
+            false
+          end
           def belt_app_worktree?(worktree)
             BeltEnvironment.respond_to?(:belt_app?) && BeltEnvironment.belt_app?(worktree)
           end
