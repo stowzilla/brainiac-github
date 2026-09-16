@@ -742,15 +742,23 @@ module Brainiac
 
             intent_ctx = fetch_pr_intent_context(pr_number, repo_name, agent_name)
             agent_env = github_agent_env(agent_name, repo_name)
+            # detect_model_explicit is newer core; fall back to detect_model on older builds.
+            if respond_to?(:detect_model_explicit)
+              comment_model, comment_model_explicit = detect_model_explicit(project_config, text: comment_body)
+            else
+              comment_model = detect_model(project_config, text: comment_body)
+              comment_model_explicit = nil
+            end
             run_agent_opts = { project_config: project_config, chdir: worktree,
                                log_name: "pr-comment-#{pr_number}",
-                               model: detect_model(project_config, text: comment_body),
+                               model: comment_model,
                                effort: detect_effort(project_config, text: comment_body),
                                agent_name: agent_name, source: :github,
                                source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
                                message: comment_body, channel: "GitHub PR comment",
                                context: intent_ctx }
             run_agent_opts[:env] = agent_env if method(:run_agent).parameters.flatten.include?(:env)
+            run_agent_opts[:explicit_model] = comment_model_explicit if method(:run_agent).parameters.flatten.include?(:explicit_model)
             pid, log_file = run_agent(prompt, **run_agent_opts)
             return unless pid
 
