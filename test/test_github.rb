@@ -190,3 +190,45 @@ class TestResolveWorkItemAgent < Minitest::Test
     assert_equal "Sherlock", result
   end
 end
+
+class TestDispatchOverrideOpts < Minitest::Test
+  HANDLER = Brainiac::Plugins::Github::Handler
+
+  def setup
+    # Mirror core's run_agent keyword surface so unsupported-key filtering is realistic.
+    HANDLER.define_singleton_method(:run_agent) do |_prompt, project_config:, model: nil, effort: nil, cli_provider: nil,
+                                                    profile: nil, explicit_model: nil, **|
+      [project_config, model, effort, cli_provider, profile, explicit_model]
+    end
+  end
+
+  def teardown
+    HANDLER.singleton_class.send(:remove_method, :run_agent)
+    HANDLER.singleton_class.send(:remove_method, :resolve_dispatch_overrides) if HANDLER.singleton_methods.include?(:resolve_dispatch_overrides)
+  end
+
+  def test_uses_core_resolve_dispatch_overrides
+    calls = []
+    HANDLER.define_singleton_method(:resolve_dispatch_overrides) do |_config, **kwargs|
+      calls << kwargs
+      { cli_provider: "claude", model: "sonnet", effort: nil, profile: nil, explicit_model: true }
+    end
+
+    opts = HANDLER.send(:dispatch_override_opts, {}, "[cli:claude] [sonnet] fix", "Galen", "wi-1")
+
+    assert_equal({ cli_provider: "claude", model: "sonnet", explicit_model: true }, opts)
+    assert_equal({ text: "[cli:claude] [sonnet] fix", agent_name: "Galen", work_item_id: "wi-1" }, calls.first)
+  end
+
+  def test_passes_stored_provider_for_untagged_comment
+    HANDLER.define_singleton_method(:resolve_dispatch_overrides) do |_config, **|
+      { cli_provider: "claude", model: nil, effort: "high", profile: "q", explicit_model: false }
+    end
+
+    opts = HANDLER.send(:dispatch_override_opts, {}, "please fix", "Galen", "wi-1")
+
+    assert_equal "claude", opts[:cli_provider]
+    assert_equal "high", opts[:effort]
+    assert_equal "q", opts[:profile]
+  end
+end

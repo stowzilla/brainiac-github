@@ -181,13 +181,14 @@ module Brainiac
             result = find_work_item_by_branch(branch)
 
             if result
-              _internal_id, card_info = result
+              work_item_id, card_info = result
               card_number = extract_card_number(card_info)
               unless card_number
                 LOG.warn "Card has no number — can't dispatch review"
                 return [200, { status: "ignored", reason: "card has no number" }.to_json]
               end
             else
+              work_item_id = nil
               card_info = {}
               card_number = nil
             end
@@ -236,7 +237,7 @@ module Brainiac
             card_context = card_number ? " for card ##{card_number}" : ""
             LOG.info "PR review submitted by #{reviewer} on PR ##{pr_number}#{card_context} (project: #{project_key})"
             dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
-                               repo_name, project_key, project_config, repo_path)
+                               repo_name, project_key, project_config, repo_path, work_item_id: work_item_id)
 
             [200, { status: "processed", card: card_number, pr: pr_number, reviewer: reviewer, project: project_key }.to_json]
           rescue StandardError => e
@@ -742,23 +743,15 @@ module Brainiac
 
             intent_ctx = fetch_pr_intent_context(pr_number, repo_name, agent_name)
             agent_env = github_agent_env(agent_name, repo_name)
-            # detect_model_explicit is newer core; fall back to detect_model on older builds.
-            if respond_to?(:detect_model_explicit)
-              comment_model, comment_model_explicit = detect_model_explicit(project_config, text: comment_body)
-            else
-              comment_model = detect_model(project_config, text: comment_body)
-              comment_model_explicit = nil
-            end
             run_agent_opts = { project_config: project_config, chdir: worktree,
                                log_name: "pr-comment-#{pr_number}",
-                               model: comment_model,
-                               effort: detect_effort(project_config, text: comment_body),
                                agent_name: agent_name, source: :github,
                                source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: worktree },
                                message: comment_body, channel: "GitHub PR comment",
                                context: intent_ctx }
+            work_item_id = find_work_item_by_worktree(worktree)&.first if respond_to?(:find_work_item_by_worktree, true)
+            run_agent_opts.merge!(dispatch_override_opts(project_config, comment_body, agent_name, work_item_id))
             run_agent_opts[:env] = agent_env if method(:run_agent).parameters.flatten.include?(:env)
-            run_agent_opts[:explicit_model] = comment_model_explicit if method(:run_agent).parameters.flatten.include?(:explicit_model)
             pid, log_file = run_agent(prompt, **run_agent_opts)
             return unless pid
 
@@ -766,7 +759,7 @@ module Brainiac
           end
 
           def dispatch_pr_review(card_number, card_key, card_info, pr_number, review, reviewer,
-                                 repo_name, project_key, project_config, repo_path)
+                                 repo_name, project_key, project_config, repo_path, work_item_id: nil)
             review_id = review["id"]
             agent_name = resolve_work_item_agent(card_info, project_config)
 
@@ -809,11 +802,42 @@ module Brainiac
                                source_context: { pr_number: pr_number, repo_name: repo_name, work_dir: work_dir },
                                message: review["body"], channel: "GitHub PR review",
                                context: fetch_pr_intent_context(pr_number, repo_name, agent_name) }
+            run_agent_opts.merge!(dispatch_override_opts(project_config, review["body"].to_s, agent_name, work_item_id))
             run_agent_opts[:env] = agent_env if method(:run_agent).parameters.flatten.include?(:env)
             pid, log_file = run_agent(prompt, **run_agent_opts)
             return unless pid
 
             register_session(card_key, pid, log_file: log_file, agent_name: agent_name)
+          end
+
+          # run_agent options for the CLI provider, model, effort and profile of a dispatch.
+          # Core's resolve_dispatch_overrides parses the [cli:X]/[model]/[effort:X]/[p:X] tags,
+          # falls back to the work item's stored overrides (so a card switched to claude in
+          # Fizzy stays on claude for PR comments), resolves the model through the provider
+          # that will actually run, and persists new tags. Older core builds lack it, so fall
+          # back to the per-tag detectors there.
+          def dispatch_override_opts(project_config, text, agent_name, work_item_id)
+            supported = method(:run_agent).parameters.flatten
+            opts = if respond_to?(:resolve_dispatch_overrides, true)
+                     overrides = resolve_dispatch_overrides(project_config, text: text, agent_name: agent_name,
+                                                                            work_item_id: work_item_id)
+                     { cli_provider: overrides[:cli_provider], model: overrides[:model], effort: overrides[:effort],
+                       profile: overrides[:profile], explicit_model: overrides[:explicit_model] }
+                   else
+                     legacy_override_opts(project_config, text)
+                   end
+            opts.compact.slice(*supported)
+          end
+
+          def legacy_override_opts(project_config, text)
+            cli_provider = respond_to?(:detect_cli_provider, true) ? detect_cli_provider(text: text) : nil
+            if respond_to?(:detect_model_explicit, true)
+              model, explicit = detect_model_explicit(project_config, text: text, cli_provider_override: cli_provider)
+            else
+              model = detect_model(project_config, text: text)
+            end
+            { cli_provider: cli_provider, model: model, explicit_model: explicit,
+              effort: detect_effort(project_config, text: text) }
           end
 
           def build_review_context(reviewer, review, pr_number, repo_name, agent_key = nil)
