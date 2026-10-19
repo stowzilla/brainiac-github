@@ -7,6 +7,14 @@ module Brainiac
         # Marker that starts every crash-notification comment (see register_crash_handler!).
         CRASH_COMMENT_PREFIX = "💥"
 
+        # Circuit breaker: max comment dispatches per (repo, PR, agent) within the window.
+        # Stops any comment -> dispatch -> crash -> comment feedback loop, regardless of
+        # who posted the comment or what it says.
+        COMMENT_DISPATCH_LIMIT = 4
+        COMMENT_DISPATCH_WINDOW = 120 # seconds
+        COMMENT_DISPATCH_LOCK = Mutex.new
+        COMMENT_DISPATCH_TIMES = Hash.new { |h, k| h[k] = [] }
+
         class << self
           def handle_pr_merged(payload)
             pr = payload["pull_request"]
@@ -312,6 +320,12 @@ module Brainiac
             # Cross-agent LOCAL bot comments (e.g. GLaDOS commenting on Galen's PR) are still processed.
             bot_ignore_reason = bot_comment_ignore_reason(comment_user, comment_user_type, agent_name, pr_number)
             return bot_ignore_reason if bot_ignore_reason
+
+            if comment_dispatch_throttled?(repo_name, pr_number, agent_name)
+              LOG.warn "[GitHub] PR ##{pr_number}: >#{COMMENT_DISPATCH_LIMIT} dispatches for #{agent_name} in " \
+                       "#{COMMENT_DISPATCH_WINDOW}s — possible loop, ignoring comment"
+              return [200, { status: "ignored", reason: "dispatch rate limit" }.to_json]
+            end
 
             branch = fetch_pr_branch(repo_name, pr_number, agent_name, project_config)
             result = find_work_item_by_branch(branch)
@@ -643,6 +657,20 @@ module Brainiac
           # 1. Self-triggered: bot matches the dispatching agent (prevents loops)
           # 2. Remote agent: bot matches a known agent that isn't local (other machine handles it)
           # Allows: cross-agent LOCAL bot comments (e.g. GLaDOS commenting on Galen's PR)
+          # Records a dispatch attempt; true when the (repo, PR, agent) is over the limit.
+          def comment_dispatch_throttled?(repo_name, pr_number, agent_name)
+            key = [repo_name, pr_number, agent_name.to_s.downcase]
+            now = Time.now.to_f
+            COMMENT_DISPATCH_LOCK.synchronize do
+              times = COMMENT_DISPATCH_TIMES[key]
+              times.reject! { |t| now - t > COMMENT_DISPATCH_WINDOW }
+              return true if times.size >= COMMENT_DISPATCH_LIMIT
+
+              times << now
+              false
+            end
+          end
+
           def bot_comment_ignore_reason(comment_user, comment_user_type, agent_name, pr_number)
             return nil unless comment_user_type == "Bot"
 
