@@ -265,29 +265,8 @@ module Brainiac
             comment_user_type = comment.dig("user", "type")
             repo_name = payload.dig("repository", "full_name")
 
-            unless issue["pull_request"]
-              LOG.info "Issue comment on non-PR issue ##{issue["number"]}, ignoring"
-              return [200, { status: "ignored", reason: "not a PR comment" }.to_json]
-            end
-
-            # If the PR was opened by a remote agent bot (not local to this machine),
-            # skip dispatch — the other machine that owns the agent will handle it.
-            pr_author = issue.dig("user", "login")
-            pr_author_type = issue.dig("user", "type")
-            unless pr_author_owned_locally?(pr_author, pr_author_type)
-              pr_number = issue["number"]
-              LOG.info "[GitHub] PR ##{pr_number} owned by remote agent (#{pr_author}) — skipping dispatch"
-              return [200, { status: "ignored", reason: "PR owned by remote agent" }.to_json]
-            end
-
-            # Crash notifications are posted via `gh` as the human's account when the app
-            # client isn't configured, so the bot-login checks below can't catch them.
-            # Without this guard each crash comment re-dispatches the agent, which crashes
-            # again, forever.
-            if comment_body.to_s.lstrip.start_with?(CRASH_COMMENT_PREFIX)
-              LOG.info "[GitHub] Ignoring crash notification comment on PR ##{issue['number']}"
-              return [200, { status: "ignored", reason: "crash notification" }.to_json]
-            end
+            rejection = issue_comment_rejection(issue, comment_body)
+            return rejection if rejection
 
             project_result = identify_project_by_repo(repo_name)
             unless project_result
@@ -445,6 +424,42 @@ module Brainiac
             pr_author = pull_request.dig("user", "login")
             pr_author_type = pull_request.dig("user", "type")
             pr_author_owned_locally?(pr_author, pr_author_type)
+          end
+
+          # Early-exit guards for issue_comment events. Returns a Rack-style response
+          # array when the comment should be ignored, or nil to continue dispatch.
+          def issue_comment_rejection(issue, comment_body)
+            unless issue["pull_request"]
+              LOG.info "Issue comment on non-PR issue ##{issue["number"]}, ignoring"
+              return [200, { status: "ignored", reason: "not a PR comment" }.to_json]
+            end
+
+            # If the PR was opened by a remote agent bot (not local to this machine),
+            # skip dispatch — the other machine that owns the agent will handle it.
+            pr_author = issue.dig("user", "login")
+            pr_author_type = issue.dig("user", "type")
+            unless pr_author_owned_locally?(pr_author, pr_author_type)
+              LOG.info "[GitHub] PR ##{issue["number"]} owned by remote agent (#{pr_author}) — skipping dispatch"
+              return [200, { status: "ignored", reason: "PR owned by remote agent" }.to_json]
+            end
+
+            # Crash notifications are posted via `gh` as the human's account when the app
+            # client isn't configured, so the bot-login checks below can't catch them.
+            # Without this guard each crash comment re-dispatches the agent, which crashes
+            # again, forever.
+            if crash_notification_comment?(comment_body)
+              LOG.info "[GitHub] Ignoring crash notification comment on PR ##{issue["number"]}"
+              return [200, { status: "ignored", reason: "crash notification" }.to_json]
+            end
+
+            nil
+          end
+
+          # True when a comment is a crash notification posted by the crash handler.
+          # These are posted via `gh` as the human account when no app client is
+          # configured, so the bot-login checks can't catch them — match on the prefix.
+          def crash_notification_comment?(comment_body)
+            comment_body.to_s.lstrip.start_with?(CRASH_COMMENT_PREFIX)
           end
 
           # Check PR ownership given the author login and account type.
