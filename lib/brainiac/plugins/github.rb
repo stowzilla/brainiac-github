@@ -67,7 +67,8 @@ module Brainiac
             agent_key = ctx[:agent_key]
             snippet = ctx[:snippet]
             snippet_block = snippet ? "\n```\n#{snippet[-1500..]}\n```" : ""
-            comment_body = "💥 **#{agent_display} crashed** (exit code #{ctx[:exit_status]})\n\nLog: `#{ctx[:log_file]}`#{snippet_block}"
+            comment_body = "#{Handler::CRASH_COMMENT_PREFIX} **#{agent_display} crashed** " \
+                           "(exit code #{ctx[:exit_status]})\n\nLog: `#{ctx[:log_file]}`#{snippet_block}"
 
             begin
               if AppClient.configured?(agent_key)
