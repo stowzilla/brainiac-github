@@ -4,6 +4,9 @@ module Brainiac
   module Plugins
     module Github
       module Handler
+        # Marker that starts every crash-notification comment (see register_crash_handler!).
+        CRASH_COMMENT_PREFIX = "💥"
+
         class << self
           def handle_pr_merged(payload)
             pr = payload["pull_request"]
@@ -267,6 +270,15 @@ module Brainiac
               pr_number = issue["number"]
               LOG.info "[GitHub] PR ##{pr_number} owned by remote agent (#{pr_author}) — skipping dispatch"
               return [200, { status: "ignored", reason: "PR owned by remote agent" }.to_json]
+            end
+
+            # Crash notifications are posted via `gh` as the human's account when the app
+            # client isn't configured, so the bot-login checks below can't catch them.
+            # Without this guard each crash comment re-dispatches the agent, which crashes
+            # again, forever.
+            if comment_body.to_s.lstrip.start_with?(CRASH_COMMENT_PREFIX)
+              LOG.info "[GitHub] Ignoring crash notification comment on PR ##{issue['number']}"
+              return [200, { status: "ignored", reason: "crash notification" }.to_json]
             end
 
             project_result = identify_project_by_repo(repo_name)
