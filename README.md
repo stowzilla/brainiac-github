@@ -218,7 +218,29 @@ avoid duplicate event deliveries.
 brainiac github setup     # Create config file from template
 brainiac github config    # Show current configuration
 brainiac github status    # Check if webhook endpoint is active
+brainiac github token      # Mint a fresh installation token (prints to stdout)
 ```
+
+### Minting a fresh token mid-session
+
+Installation tokens live exactly one hour. Agents receive a token baked into
+`GH_TOKEN` at spawn time, so any session running longer than an hour ends up
+holding a dead token by the time it reaches `gh pr create`. Re-mint on demand
+right before the GitHub operation:
+
+```bash
+export GH_TOKEN=$(brainiac github token --agent galen --owner stowzilla)
+gh pr create --fill
+```
+
+Options:
+
+- `--agent`, `-a` — agent key for per-agent app identity. Falls back to the
+  shared `brainiac` app when the agent has no app configured.
+- `--owner`, `-o` — repo owner, used to select the correct installation.
+
+On success, the token (and nothing else) is written to stdout so `$(...)`
+capture stays clean. Failures go to stderr with a non-zero exit code.
 
 ## Hooks Emitted
 
