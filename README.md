@@ -6,9 +6,11 @@ GitHub webhook plugin for [Brainiac](https://github.com/stowzilla/brainiac) — 
 
 - **PR Reviews** — dispatches agents to address review feedback
 - **PR Comments** — routes PR conversation to the assigned agent
+- **PR Opens / Pushes** — tracks new PRs against work items; redeploys ephemeral envs and emits hooks on new pushes
 - **PR Merges** — cleans up worktrees, emits hooks for card management plugins
-- **Workflow Runs** — notifies on CI failures and deploy completions
-- **Issues** — logs new issues for tracking
+- **Workflow Runs** — matches workflows by name: `Deploy to Production` failure → notify; `Deploy to UAT` success → notify; `Deploy to Production` success → emits `:production_deployed`
+- **Issues** — logs new issues (no dispatch)
+- **Agent crashes** — posts a crash comment on the PR the agent was working on
 
 ## Installation
 
@@ -17,9 +19,12 @@ brainiac install github
 brainiac restart
 ```
 
+Install creates `~/.brainiac/github.json` from `templates/github.json.example`
+(or run `brainiac github setup` to create it later).
+
 ## Configuration
 
-Config lives at `~/.brainiac/github.json`:
+Config lives at `~/.brainiac/github.json` (under `$BRAINIAC_DIR` if set):
 
 ```json
 {
@@ -110,7 +115,10 @@ identity — so the webhook-receiver app doubles as the brainiac agent's identit
 
 #### Step 2: Create Agent Identity Apps (One Per Agent)
 
-For each agent that should have its own avatar on PR comments:
+For each agent that should have its own avatar on PR comments. This is still
+manual: `brainiac agent create` (in Brainiac core) creates the agent, but this
+plugin has no `on_agent_created` hook, so create the app and add its `apps` entry
+yourself. `github.json` is re-read when it changes, so no restart is needed.
 
 1. Go to **Settings → Developer settings → GitHub Apps → New GitHub App**
 2. Set the following:
@@ -166,7 +174,21 @@ For each agent that should have its own avatar on PR comments:
 ```
 
 Each key in `apps` matches the agent's registry key (lowercase). The
-`installations` hash maps account/org names to their Installation IDs.
+`installations` hash maps account/org names to their Installation IDs (a flat
+`installation_id` also works for a single account).
+
+#### Single-App Mode
+
+Instead of `apps`, you can configure one shared app under `app` (the template's
+default shape). It's used for any agent without an `apps` entry:
+
+```json
+"app": {
+  "id": "100000",
+  "private_key_path": "~/.brainiac/github-app-private-key.pem",
+  "installation_id": "11111111"
+}
+```
 
 #### Private Key Details
 
@@ -189,12 +211,14 @@ commit `.pem` files to version control.
 
 #### Fallback
 
-If no app credentials are configured for an agent, the plugin falls back to
-using the `gh` CLI (which authenticates as your personal GitHub account).
+If no app credentials are configured for an agent (no `apps` entry, `app`
+section, or env vars), the plugin falls back to using the `gh` CLI (which
+authenticates as your personal GitHub account).
 
 ### Environment Variables
 
-As an alternative to config file values, you can set (applies to single-app mode only):
+Used when the config file doesn't set the value. The `GITHUB_APP_*` variables
+describe one shared app and are the last fallback after `apps.<agent>` and `app`:
 
 - `GITHUB_WEBHOOK_SECRET` — webhook signature secret
 - `GITHUB_APP_ID` — GitHub App ID
@@ -215,19 +239,21 @@ avoid duplicate event deliveries.
 ## CLI
 
 ```bash
-brainiac github setup     # Create config file from template
-brainiac github config    # Show current configuration
-brainiac github status    # Check if webhook endpoint is active
+brainiac github setup     # Create config file from template (if missing)
+brainiac github config    # Show webhook secret, repos, and shared `app` credentials
+brainiac github status    # Check the Brainiac server is up (POST /github active)
 ```
 
 ## Hooks Emitted
 
 | Hook | When | Payload |
 |------|------|---------|
+| `:pr_opened` | PR opened on a tracked work item branch | card_number, pr_number, repo_name, branch, base_branch, ... |
 | `:pr_merged` | PR merged to default branch | card_number, pr_url, project_key, ... |
+| `:pr_merged_to_branch` | Any merge of a `fizzy-<n>-…` branch (incl. epic branches) | card_number, branch, base_branch, pr_url, ... |
 | `:pr_review_received` | Review submitted | card_number, reviewer, agent_name, ... |
-| `:pr_synchronized` | PR updated (force push) | card_number, worktree, branch, ... |
-| `:production_deployed` | Deploy workflow succeeds | project_key, project_config |
+| `:pr_synchronized` | New commits pushed to a PR | card_number, worktree, branch, ... |
+| `:production_deployed` | `Deploy to Production` workflow succeeds | project_key, project_config |
 
 ## Development
 
