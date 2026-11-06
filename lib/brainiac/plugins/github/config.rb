@@ -52,8 +52,7 @@ module Brainiac
           def installation_id(agent_key = nil, repo_owner: nil)
             # Check per-agent config first
             if agent_key
-              normalized = agent_key.to_s.downcase
-              agent_conf = @config.dig("apps", normalized)
+              agent_conf = app_config(agent_key)
               if agent_conf
                 # Per-agent may have multiple installations keyed by owner
                 if repo_owner && agent_conf["installations"]
@@ -85,7 +84,18 @@ module Brainiac
           def agent_app_configured?(agent_key)
             return false unless agent_key
 
-            !!@config.dig("apps", agent_key.to_s.downcase)
+            !!app_config(agent_key)
+          end
+
+          # The "apps" entry for an agent. Callers pass display names ("Judge Dredd")
+          # while entries are keyed by registry key ("judge-dredd", "sleeper_service"),
+          # so fall back to comparing with spaces, dashes and underscores ignored.
+          def app_config(agent_key)
+            return nil unless agent_key
+
+            apps = @config["apps"] || {}
+            apps[agent_key.to_s.downcase] ||
+              apps.find { |key, _| squash(key) == squash(agent_key) }&.last
           end
 
           # Check if a repo owner is in the allowed_owners list.
@@ -102,9 +112,11 @@ module Brainiac
           def per_agent_value(agent_key, field)
             return nil unless agent_key
 
-            # Agent names come in as display names ("Galen") but config keys are lowercase ("galen")
-            normalized = agent_key.to_s.downcase
-            @config.dig("apps", normalized, field)&.to_s
+            app_config(agent_key)&.dig(field)&.to_s
+          end
+
+          def squash(name)
+            name.to_s.downcase.gsub(/[^a-z0-9]/, "")
           end
 
           def load_config

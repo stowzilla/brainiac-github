@@ -115,10 +115,18 @@ identity — so the webhook-receiver app doubles as the brainiac agent's identit
 
 #### Step 2: Create Agent Identity Apps (One Per Agent)
 
-For each agent that should have its own avatar on PR comments. This is still
-manual: `brainiac agent create` (in Brainiac core) creates the agent, but this
-plugin has no `on_agent_created` hook, so create the app and add its `apps` entry
-yourself. `github.json` is re-read when it changes, so no restart is needed.
+`brainiac agent create <Name>` (and `brainiac agent setup <name>` for existing
+agents) does this for you. It opens a local page that hands GitHub an
+[app manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+for `<agent>-brainiac`: webhook off, Contents/Issues/Pull requests write, Actions
+read, installable on any account. You click **Create GitHub App**, then **Install**
+on each account. The plugin saves the private key to `~/.brainiac/` and writes the
+`apps` entry, including installation IDs. GitHub has no API for app logos, so
+upload the avatar yourself (setup prints the link). Apps are created under your
+personal account. Set `"agent_app_owner": "<org>"` in `github.json` to create
+them under an org instead.
+
+To do it by hand:
 
 1. Go to **Settings → Developer settings → GitHub Apps → New GitHub App**
 2. Set the following:
@@ -127,7 +135,7 @@ yourself. `github.json` is re-read when it changes, so no restart is needed.
    - **Webhook**: uncheck **"Active"** (these apps don't receive events)
 3. Under **"Where can this GitHub App be installed?"**, select **"Any account"**
 4. Set **Permissions** (under "Repository permissions"):
-   - **Contents**: Read-only
+   - **Contents**: Read & Write
    - **Issues**: Read & Write
    - **Pull requests**: Read & Write
 5. **Do NOT subscribe to any events** (webhook is disabled)
@@ -173,7 +181,8 @@ yourself. `github.json` is re-read when it changes, so no restart is needed.
 }
 ```
 
-Each key in `apps` matches the agent's registry key (lowercase). The
+Each key in `apps` matches the agent's registry key (`galen`, `judge-dredd`);
+case, spaces, dashes and underscores are ignored when matching a display name. The
 `installations` hash maps account/org names to their Installation IDs (a flat
 `installation_id` also works for a single account).
 

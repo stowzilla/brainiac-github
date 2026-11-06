@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "agent_setup"
+
 module Brainiac
   module Plugins
     module Github
@@ -96,6 +98,11 @@ module Brainiac
             puts "  status    Check if GitHub webhook endpoint is active"
           end
         end
+      end
+
+      # Called by `brainiac agent create` / `brainiac agent setup`.
+      def self.on_agent_created(agent_key, entry)
+        AgentSetup.run(agent_key, entry)
       end
 
       # Plugin CLI entry points
