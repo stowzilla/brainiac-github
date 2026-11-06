@@ -32,6 +32,7 @@ module Brainiac
           # Checks per-agent first, then shared app config.
           # Guards against empty-string values (common in template configs).
           def configured?(agent_key = nil)
+            Config.reload! # pick up apps added by `brainiac agent setup` without a restart
             id = Config.app_id(agent_key)
             key_path = Config.private_key_path(agent_key)
             inst_id = Config.installation_id(agent_key)
@@ -105,6 +106,7 @@ module Brainiac
           # Public accessor for installation tokens (used to inject GH_TOKEN into agent env).
           # Returns the raw token string, or nil on failure.
           def installation_token_for(agent_key = nil, repo_owner: nil)
+            Config.reload!
             installation_token(agent_key, repo_owner: repo_owner)
           rescue StandardError
             nil
